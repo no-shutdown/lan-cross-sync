@@ -1,4 +1,5 @@
 mod domain;
+mod pairing;
 mod protocol;
 mod settings;
 

@@ -126,6 +126,12 @@ button:disabled {
   gap: 6px;
 }
 
+.setting-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
 .danger {
   border-color: #e1b7b7;
   color: #9b1c1c;

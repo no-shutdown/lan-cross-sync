@@ -3,7 +3,9 @@ import './App.css'
 import {
   cancelPairing,
   clearPairing,
+  getAutostartEnabled,
   getDashboardState,
+  setAutostartEnabled,
   setDefaultFileTarget,
   setReceiveClipboard,
   startPairing,
@@ -85,14 +87,26 @@ function PeerCard({
 
 export default function App() {
   const [dashboard, setDashboard] = useState<DashboardState | null>(null)
+  const [autostart, setAutostart] = useState<boolean | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   async function refresh() {
     try {
       setDashboard(await getDashboardState())
+      setAutostart(await getAutostartEnabled())
       setError(null)
     } catch (err) {
       setError(formatInvokeError(err, 'Failed to load dashboard state.'))
+    }
+  }
+
+  async function toggleAutostart() {
+    try {
+      const next = await setAutostartEnabled(!autostart)
+      setAutostart(next)
+      setError(null)
+    } catch (err) {
+      setError(formatInvokeError(err, 'Failed to update autostart.'))
     }
   }
 
@@ -187,6 +201,18 @@ export default function App() {
             ))}
           </div>
         )}
+      </section>
+
+      <section className="panel">
+        <h2>Startup</h2>
+        <label className="setting-row">
+          <input
+            type="checkbox"
+            checked={Boolean(autostart)}
+            onChange={() => void toggleAutostart()}
+          />
+          Start LAN Cross Sync when this computer starts
+        </label>
       </section>
 
       <section className="drop-zone" aria-label="Future file drop zone">

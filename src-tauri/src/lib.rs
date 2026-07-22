@@ -8,8 +8,8 @@ mod registry;
 mod settings;
 
 use commands::{
-    cancel_pairing, clear_pairing, get_dashboard_state, set_default_file_target,
-    set_receive_clipboard, start_pairing, AppState,
+    cancel_pairing, clear_pairing, get_autostart_enabled, get_dashboard_state,
+    set_autostart_enabled, set_default_file_target, set_receive_clipboard, start_pairing, AppState,
 };
 use registry::PeerRegistry;
 use settings::SettingsStore;
@@ -46,6 +46,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_dashboard_state,
+            get_autostart_enabled,
+            set_autostart_enabled,
             start_pairing,
             cancel_pairing,
             set_receive_clipboard,

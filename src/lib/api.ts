@@ -5,6 +5,14 @@ export function getDashboardState(): Promise<DashboardState> {
   return invoke('get_dashboard_state')
 }
 
+export function getAutostartEnabled(): Promise<boolean> {
+  return invoke('get_autostart_enabled')
+}
+
+export function setAutostartEnabled(enabled: boolean): Promise<boolean> {
+  return invoke('set_autostart_enabled', { enabled })
+}
+
 export function startPairing(): Promise<string> {
   return invoke('start_pairing')
 }

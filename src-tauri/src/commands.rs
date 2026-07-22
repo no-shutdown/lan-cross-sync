@@ -8,6 +8,8 @@ use crate::{
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::State;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use tauri_plugin_autostart::ManagerExt;
 
 pub struct AppState {
     pub settings_store: SettingsStore,
@@ -41,6 +43,46 @@ pub fn get_dashboard_state(state: State<'_, AppState>) -> AppResult<DashboardSta
         discovered_devices: registry.discovered(),
         active_pairing_code,
     })
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command]
+pub fn get_autostart_enabled(app: tauri::AppHandle) -> AppResult<bool> {
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|err| AppError::Message(format!("Failed to read autostart state: {err}")))
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[tauri::command]
+pub fn get_autostart_enabled(_app: tauri::AppHandle) -> AppResult<bool> {
+    Err(AppError::Message(
+        "Autostart is only available on desktop.".to_string(),
+    ))
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command]
+pub fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> AppResult<bool> {
+    let manager = app.autolaunch();
+    let result = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+
+    result.map_err(|err| AppError::Message(format!("Failed to update autostart: {err}")))?;
+    manager
+        .is_enabled()
+        .map_err(|err| AppError::Message(format!("Failed to read autostart state: {err}")))
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[tauri::command]
+pub fn set_autostart_enabled(_app: tauri::AppHandle, _enabled: bool) -> AppResult<bool> {
+    Err(AppError::Message(
+        "Autostart is only available on desktop.".to_string(),
+    ))
 }
 
 #[tauri::command]

@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 pub const PAIRING_CODE_TTL: Duration = Duration::from_secs(120);
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PairingSession {
     pub session_id: String,
     pub code: String,
@@ -65,5 +65,19 @@ mod tests {
 
         assert!(session.verify_code("123456"));
         assert!(!session.verify_code("654321"));
+    }
+
+    #[test]
+    fn expired_session_rejects_matching_code() {
+        let device = DeviceInfo::new_local("MacBook", 45731);
+        let session = PairingSession {
+            session_id: Uuid::new_v4().to_string(),
+            code: "123456".to_string(),
+            local_device: device,
+            created_at: Instant::now() - PAIRING_CODE_TTL - Duration::from_secs(1),
+        };
+
+        assert!(session.is_expired());
+        assert!(!session.verify_code("123456"));
     }
 }

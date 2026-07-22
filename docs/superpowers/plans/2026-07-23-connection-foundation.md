@@ -57,7 +57,7 @@ Create or modify these files:
 - Modify: `src-tauri/Cargo.toml`
 - Modify: `src-tauri/tauri.conf.json`
 
-- [ ] **Step 1: Initialize git**
+- [x] **Step 1: Initialize git**
 
 Run:
 
@@ -70,7 +70,7 @@ git commit -m "docs: add LAN cross sync design and foundation plan"
 
 Expected: a new repository is created and the approved design/plan are committed.
 
-- [ ] **Step 2: Scaffold the Tauri project**
+- [x] **Step 2: Scaffold the Tauri project**
 
 Run:
 
@@ -93,7 +93,7 @@ Choose your UI flavor: TypeScript
 
 Expected: `package.json`, `src`, and `src-tauri` are created without deleting the existing `docs` directory.
 
-- [ ] **Step 3: Install dependencies**
+- [x] **Step 3: Install dependencies**
 
 Run:
 
@@ -116,7 +116,7 @@ cargo add tempfile --dev --manifest-path src-tauri/Cargo.toml
 
 Expected: frontend dependencies install, the Tauri autostart plugin is added, and Rust dependencies are written to `src-tauri/Cargo.toml`.
 
-- [ ] **Step 4: Verify baseline project builds**
+- [x] **Step 4: Verify baseline project builds**
 
 Run:
 
@@ -128,7 +128,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 Expected: frontend build succeeds and Rust tests pass.
 
-- [ ] **Step 5: Commit scaffold**
+- [x] **Step 5: Commit scaffold**
 
 Run:
 
@@ -145,7 +145,7 @@ Expected: scaffold and dependency files are committed.
 **Files:**
 - Create: `src-tauri/src/domain.rs`
 
-- [ ] **Step 1: Write domain type tests**
+- [x] **Step 1: Write domain type tests**
 
 Create `src-tauri/src/domain.rs` with this initial test-focused content:
 
@@ -259,7 +259,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run domain tests**
+- [x] **Step 2: Run domain tests**
 
 Run:
 
@@ -270,7 +270,7 @@ cargo test --manifest-path src-tauri/Cargo.toml domain::tests -- --nocapture
 
 Expected: tests pass.
 
-- [ ] **Step 3: Expose the domain module**
+- [x] **Step 3: Expose the domain module**
 
 Modify `src-tauri/src/lib.rs` so it includes this module declaration near the top:
 
@@ -278,7 +278,7 @@ Modify `src-tauri/src/lib.rs` so it includes this module declaration near the to
 mod domain;
 ```
 
-- [ ] **Step 4: Run Rust tests**
+- [x] **Step 4: Run Rust tests**
 
 Run:
 
@@ -289,7 +289,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 Expected: all Rust tests pass.
 
-- [ ] **Step 5: Commit domain types**
+- [x] **Step 5: Commit domain types**
 
 Run:
 
@@ -307,7 +307,7 @@ Expected: domain model is committed.
 - Create: `src-tauri/src/settings.rs`
 - Modify: `src-tauri/src/lib.rs`
 
-- [ ] **Step 1: Create the settings store**
+- [x] **Step 1: Create the settings store**
 
 Create `src-tauri/src/settings.rs`:
 
@@ -423,7 +423,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Expose the settings module**
+- [x] **Step 2: Expose the settings module**
 
 Modify `src-tauri/src/lib.rs`:
 
@@ -432,7 +432,7 @@ mod domain;
 mod settings;
 ```
 
-- [ ] **Step 3: Run settings tests**
+- [x] **Step 3: Run settings tests**
 
 Run:
 
@@ -443,7 +443,7 @@ cargo test --manifest-path src-tauri/Cargo.toml settings::tests -- --nocapture
 
 Expected: settings persistence tests pass.
 
-- [ ] **Step 4: Commit settings store**
+- [x] **Step 4: Commit settings store**
 
 Run:
 
@@ -461,7 +461,7 @@ Expected: settings store is committed.
 - Create: `src-tauri/src/protocol.rs`
 - Modify: `src-tauri/src/lib.rs`
 
-- [ ] **Step 1: Create protocol DTOs and tests**
+- [x] **Step 1: Create protocol DTOs and tests**
 
 Create `src-tauri/src/protocol.rs`:
 
@@ -550,7 +550,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Expose protocol module**
+- [x] **Step 2: Expose protocol module**
 
 Modify `src-tauri/src/lib.rs`:
 
@@ -560,7 +560,7 @@ mod protocol;
 mod settings;
 ```
 
-- [ ] **Step 3: Run protocol tests**
+- [x] **Step 3: Run protocol tests**
 
 Run:
 
@@ -571,7 +571,7 @@ cargo test --manifest-path src-tauri/Cargo.toml protocol::tests -- --nocapture
 
 Expected: protocol tests pass.
 
-- [ ] **Step 4: Commit protocol messages**
+- [x] **Step 4: Commit protocol messages**
 
 Run:
 
@@ -589,7 +589,7 @@ Expected: protocol module is committed.
 - Create: `src-tauri/src/pairing.rs`
 - Modify: `src-tauri/src/lib.rs`
 
-- [ ] **Step 1: Create pairing implementation and tests**
+- [x] **Step 1: Create pairing implementation and tests**
 
 Create `src-tauri/src/pairing.rs`:
 
@@ -665,7 +665,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Expose pairing module**
+- [x] **Step 2: Expose pairing module**
 
 Modify `src-tauri/src/lib.rs`:
 
@@ -676,7 +676,7 @@ mod protocol;
 mod settings;
 ```
 
-- [ ] **Step 3: Run pairing tests**
+- [x] **Step 3: Run pairing tests**
 
 Run:
 
@@ -687,7 +687,7 @@ cargo test --manifest-path src-tauri/Cargo.toml pairing::tests -- --nocapture
 
 Expected: pairing tests pass.
 
-- [ ] **Step 4: Commit pairing state machine**
+- [x] **Step 4: Commit pairing state machine**
 
 Run:
 
@@ -705,7 +705,7 @@ Expected: pairing module is committed.
 - Create: `src-tauri/src/registry.rs`
 - Modify: `src-tauri/src/lib.rs`
 
-- [ ] **Step 1: Create registry implementation and tests**
+- [x] **Step 1: Create registry implementation and tests**
 
 Create `src-tauri/src/registry.rs`:
 
@@ -795,7 +795,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Expose registry module**
+- [x] **Step 2: Expose registry module**
 
 Modify `src-tauri/src/lib.rs`:
 
@@ -807,7 +807,7 @@ mod registry;
 mod settings;
 ```
 
-- [ ] **Step 3: Run registry tests**
+- [x] **Step 3: Run registry tests**
 
 Run:
 
@@ -818,7 +818,7 @@ cargo test --manifest-path src-tauri/Cargo.toml registry::tests -- --nocapture
 
 Expected: registry tests pass.
 
-- [ ] **Step 4: Commit registry**
+- [x] **Step 4: Commit registry**
 
 Run:
 
@@ -836,7 +836,7 @@ Expected: registry module is committed.
 - Create: `src-tauri/src/discovery.rs`
 - Modify: `src-tauri/src/lib.rs`
 
-- [ ] **Step 1: Create discovery helpers and tests**
+- [x] **Step 1: Create discovery helpers and tests**
 
 Create `src-tauri/src/discovery.rs`:
 
@@ -904,7 +904,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Expose discovery module**
+- [x] **Step 2: Expose discovery module**
 
 Modify `src-tauri/src/lib.rs`:
 
@@ -917,7 +917,7 @@ mod registry;
 mod settings;
 ```
 
-- [ ] **Step 3: Run discovery tests**
+- [x] **Step 3: Run discovery tests**
 
 Run:
 
@@ -928,7 +928,7 @@ cargo test --manifest-path src-tauri/Cargo.toml discovery::tests -- --nocapture
 
 Expected: discovery tests pass.
 
-- [ ] **Step 4: Commit discovery helpers**
+- [x] **Step 4: Commit discovery helpers**
 
 Run:
 
@@ -947,7 +947,7 @@ Expected: discovery helpers are committed.
 - Create: `src-tauri/src/commands.rs`
 - Modify: `src-tauri/src/lib.rs`
 
-- [ ] **Step 1: Create UI-safe error type**
+- [x] **Step 1: Create UI-safe error type**
 
 Create `src-tauri/src/error.rs`:
 
@@ -983,7 +983,7 @@ impl serde::Serialize for AppError {
 pub type AppResult<T> = Result<T, AppError>;
 ```
 
-- [ ] **Step 2: Create Tauri command layer**
+- [x] **Step 2: Create Tauri command layer**
 
 Create `src-tauri/src/commands.rs`:
 
@@ -1098,7 +1098,7 @@ pub fn clear_pairing(state: State<'_, AppState>, device_id: DeviceId) -> AppResu
 }
 ```
 
-- [ ] **Step 3: Wire modules and commands**
+- [x] **Step 3: Wire modules and commands**
 
 Modify `src-tauri/src/lib.rs` to include the new modules and command registration. Preserve scaffolded plugin setup and merge this shape into the generated file:
 
@@ -1160,7 +1160,7 @@ pub fn run() {
 }
 ```
 
-- [ ] **Step 4: Run Rust tests and build**
+- [x] **Step 4: Run Rust tests and build**
 
 Run:
 
@@ -1172,7 +1172,7 @@ pnpm build
 
 Expected: Rust tests and frontend build pass.
 
-- [ ] **Step 5: Commit command layer**
+- [x] **Step 5: Commit command layer**
 
 Run:
 
@@ -1192,7 +1192,7 @@ Expected: Tauri command layer is committed.
 - Modify: `src/App.tsx`
 - Modify: `src/App.css`
 
-- [ ] **Step 1: Add frontend DTO types**
+- [x] **Step 1: Add frontend DTO types**
 
 Create `src/lib/types.ts`:
 
@@ -1231,7 +1231,7 @@ export interface DashboardState {
 }
 ```
 
-- [ ] **Step 2: Add Tauri API wrapper**
+- [x] **Step 2: Add Tauri API wrapper**
 
 Create `src/lib/api.ts`:
 
@@ -1264,7 +1264,7 @@ export function clearPairing(deviceId: DeviceId): Promise<LocalSettings> {
 }
 ```
 
-- [ ] **Step 3: Replace the app UI**
+- [x] **Step 3: Replace the app UI**
 
 Replace `src/App.tsx`:
 
@@ -1430,7 +1430,7 @@ export default function App() {
 }
 ```
 
-- [ ] **Step 4: Replace app styles**
+- [x] **Step 4: Replace app styles**
 
 Replace `src/App.css`:
 
@@ -1572,7 +1572,7 @@ button:disabled {
 }
 ```
 
-- [ ] **Step 5: Build frontend**
+- [x] **Step 5: Build frontend**
 
 Run:
 
@@ -1583,7 +1583,7 @@ pnpm build
 
 Expected: TypeScript and Vite build pass.
 
-- [ ] **Step 6: Commit control panel UI**
+- [x] **Step 6: Commit control panel UI**
 
 Run:
 
@@ -1603,7 +1603,7 @@ Expected: UI is committed.
 - Modify: `src/lib/api.ts`
 - Modify: `src/App.tsx`
 
-- [ ] **Step 1: Add autostart commands in Rust**
+- [x] **Step 1: Add autostart commands in Rust**
 
 Modify `src-tauri/src/commands.rs` by adding these imports and commands:
 
@@ -1649,7 +1649,7 @@ get_autostart_enabled,
 set_autostart_enabled
 ```
 
-- [ ] **Step 2: Add autostart permissions**
+- [x] **Step 2: Add autostart permissions**
 
 Ensure `src-tauri/capabilities/default.json` contains these permissions:
 
@@ -1668,7 +1668,7 @@ Ensure `src-tauri/capabilities/default.json` contains these permissions:
 }
 ```
 
-- [ ] **Step 3: Add frontend autostart wrappers**
+- [x] **Step 3: Add frontend autostart wrappers**
 
 Modify `src/lib/api.ts`:
 
@@ -1682,7 +1682,7 @@ export function setAutostartEnabled(enabled: boolean): Promise<boolean> {
 }
 ```
 
-- [ ] **Step 4: Add the UI switch**
+- [x] **Step 4: Add the UI switch**
 
 Modify `src/App.tsx` imports:
 
@@ -1747,7 +1747,7 @@ Add this style to `src/App.css`:
 }
 ```
 
-- [ ] **Step 5: Run verification**
+- [x] **Step 5: Run verification**
 
 Run:
 
@@ -1759,7 +1759,7 @@ pnpm build
 
 Expected: Rust tests and frontend build pass.
 
-- [ ] **Step 6: Commit tray/autostart controls**
+- [x] **Step 6: Commit tray/autostart controls**
 
 Run:
 
@@ -1776,7 +1776,7 @@ Expected: autostart commands and UI are committed.
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-23-connection-foundation.md` only if execution notes need correction
 
-- [ ] **Step 1: Start the dev app**
+- [x] **Step 1: Start the dev app**
 
 Run:
 
@@ -1796,7 +1796,14 @@ File drop area
 Startup
 ```
 
-- [ ] **Step 2: Verify local settings were created**
+Execution note: On this Windows machine, `cargo` was installed under Rustup but was not present on the active PowerShell `PATH`. The dev app was started with a temporary PATH prefix:
+
+```powershell
+$env:PATH = 'C:\Users\13565\.cargo\bin;' + $env:PATH
+pnpm tauri dev
+```
+
+- [x] **Step 2: Verify local settings were created**
 
 Run this in a second PowerShell terminal:
 
@@ -1806,7 +1813,7 @@ Get-ChildItem "$env:APPDATA\\com.local.lancrosssync" -Recurse -ErrorAction Silen
 
 Expected: a `settings.json` file exists somewhere under the app config directory. If Windows resolves the Tauri config directory differently, use the app logs or debugger to inspect `app.path().app_config_dir()`.
 
-- [ ] **Step 3: Verify pairing code behavior**
+- [x] **Step 3: Verify pairing code behavior**
 
 In the app:
 
@@ -1817,7 +1824,7 @@ In the app:
 
 Expected: pairing code appears and clears without app restart.
 
-- [ ] **Step 4: Verify build commands**
+- [x] **Step 4: Verify build commands**
 
 Stop the dev app and run:
 
@@ -1829,7 +1836,7 @@ pnpm build
 
 Expected: all tests pass and frontend build succeeds.
 
-- [ ] **Step 5: Commit acceptance notes if any plan corrections were required**
+- [x] **Step 5: Commit acceptance notes if any plan corrections were required**
 
 If no plan corrections were needed, skip this commit. If the plan was corrected during execution, run:
 

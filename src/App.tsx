@@ -88,25 +88,39 @@ function PeerCard({
 export default function App() {
   const [dashboard, setDashboard] = useState<DashboardState | null>(null)
   const [autostart, setAutostart] = useState<boolean | null>(null)
+  const [autostartPending, setAutostartPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function refresh() {
+    let nextError: string | null = null
+
     try {
       setDashboard(await getDashboardState())
-      setAutostart(await getAutostartEnabled())
-      setError(null)
     } catch (err) {
-      setError(formatInvokeError(err, 'Failed to load dashboard state.'))
+      nextError = formatInvokeError(err, 'Failed to load dashboard state.')
     }
+
+    try {
+      setAutostart(await getAutostartEnabled())
+    } catch (err) {
+      nextError ??= formatInvokeError(err, 'Failed to read autostart state.')
+    }
+
+    setError(nextError)
   }
 
   async function toggleAutostart() {
+    if (autostart === null || autostartPending) return
+
+    setAutostartPending(true)
     try {
       const next = await setAutostartEnabled(!autostart)
       setAutostart(next)
       setError(null)
     } catch (err) {
       setError(formatInvokeError(err, 'Failed to update autostart.'))
+    } finally {
+      setAutostartPending(false)
     }
   }
 
@@ -209,6 +223,7 @@ export default function App() {
           <input
             type="checkbox"
             checked={Boolean(autostart)}
+            disabled={autostart === null || autostartPending}
             onChange={() => void toggleAutostart()}
           />
           Start LAN Cross Sync when this computer starts

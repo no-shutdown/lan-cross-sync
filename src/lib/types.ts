@@ -21,7 +21,6 @@ export interface PairedPeer {
 export interface LocalSettings {
   local_device: DeviceInfo
   paired_peers: PairedPeer[]
-  autostart_enabled: boolean
 }
 
 export interface DashboardState {

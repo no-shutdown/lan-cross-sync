@@ -84,6 +84,19 @@ mod tests {
     }
 
     #[test]
+    fn load_or_create_creates_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::new(dir.path().join("nested/config/settings.json"));
+
+        store.load_or_create("Windows Desk").unwrap();
+        let raw = fs::read_to_string(store.path()).unwrap();
+        let settings: LocalSettings = serde_json::from_str(&raw).unwrap();
+
+        assert!(store.path().exists());
+        assert_eq!(settings.local_device.name, "Windows Desk");
+    }
+
+    #[test]
     fn add_or_update_peer_replaces_existing_device() {
         let dir = tempfile::tempdir().unwrap();
         let store = SettingsStore::new(dir.path().join("settings.json"));
@@ -104,12 +117,20 @@ mod tests {
 
         store.add_or_update_peer(first).unwrap();
         let settings = store.add_or_update_peer(second).unwrap();
+        let reloaded = store.load_or_create("Ignored").unwrap();
 
         assert_eq!(settings.paired_peers.len(), 1);
         assert!(settings.paired_peers[0].receive_clipboard);
         assert!(settings.paired_peers[0].is_default_file_target);
         assert_eq!(
             settings.paired_peers[0].state,
+            PeerConnectionState::Connected
+        );
+        assert_eq!(reloaded.paired_peers.len(), 1);
+        assert!(reloaded.paired_peers[0].receive_clipboard);
+        assert!(reloaded.paired_peers[0].is_default_file_target);
+        assert_eq!(
+            reloaded.paired_peers[0].state,
             PeerConnectionState::Connected
         );
     }

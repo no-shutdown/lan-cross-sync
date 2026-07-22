@@ -18,8 +18,11 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::Builder::new().build())
+    let builder = tauri::Builder::default();
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(tauri_plugin_autostart::Builder::new().build());
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app_config = app
@@ -30,11 +33,12 @@ pub fn run() {
             let settings = settings_store
                 .load_or_create("LAN Cross Sync")
                 .expect("failed to load settings");
+            let registry = PeerRegistry::from_paired(settings.paired_peers.clone());
 
             app.manage(AppState {
                 settings_store,
                 settings: Mutex::new(settings),
-                registry: Mutex::new(PeerRegistry::new()),
+                registry: Mutex::new(registry),
                 active_pairing: Mutex::new(None),
             });
 

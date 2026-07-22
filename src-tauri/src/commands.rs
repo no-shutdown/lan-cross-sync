@@ -1,5 +1,5 @@
 use crate::{
-    domain::{DeviceId, LocalSettings, PairedPeer, PeerConnectionState},
+    domain::{DeviceId, LocalSettings, PairedPeer},
     error::{AppError, AppResult},
     pairing::PairingSession,
     registry::PeerRegistry,
@@ -65,14 +65,10 @@ pub fn set_receive_clipboard(
     enabled: bool,
 ) -> AppResult<LocalSettings> {
     let mut settings = state.settings.lock().unwrap();
-    let peer = settings
-        .paired_peers
-        .iter_mut()
-        .find(|peer| peer.device.id == device_id)
-        .ok_or_else(|| AppError::Message("Paired device not found.".to_string()))?;
-    peer.receive_clipboard = enabled;
-    state.settings_store.save(&settings)?;
-    Ok(settings.clone())
+    let next = with_receive_clipboard(settings.clone(), device_id, enabled)?;
+    state.settings_store.save(&next)?;
+    *settings = next.clone();
+    Ok(next)
 }
 
 #[tauri::command]
@@ -81,30 +77,146 @@ pub fn set_default_file_target(
     device_id: DeviceId,
 ) -> AppResult<LocalSettings> {
     let mut settings = state.settings.lock().unwrap();
-    let mut found = false;
-    for peer in &mut settings.paired_peers {
-        let is_target = peer.device.id == device_id;
-        peer.is_default_file_target = is_target;
-        found |= is_target;
-    }
-    if !found {
-        return Err(AppError::Message("Paired device not found.".to_string()));
-    }
-    state.settings_store.save(&settings)?;
-    Ok(settings.clone())
+    let next = with_default_file_target(settings.clone(), device_id)?;
+    state.settings_store.save(&next)?;
+    *settings = next.clone();
+    Ok(next)
 }
 
 #[tauri::command]
 pub fn clear_pairing(state: State<'_, AppState>, device_id: DeviceId) -> AppResult<LocalSettings> {
     let mut settings = state.settings.lock().unwrap();
+    let next = without_pairing(settings.clone(), device_id.clone())?;
+    state.settings_store.save(&next)?;
+    *settings = next.clone();
+    state.registry.lock().unwrap().remove_pairing(&device_id);
+    Ok(next)
+}
+
+fn with_receive_clipboard(
+    mut settings: LocalSettings,
+    device_id: DeviceId,
+    enabled: bool,
+) -> AppResult<LocalSettings> {
+    let peer = settings
+        .paired_peers
+        .iter_mut()
+        .find(|peer| peer.device.id == device_id)
+        .ok_or_else(|| AppError::Message("Paired device not found.".to_string()))?;
+    peer.receive_clipboard = enabled;
+    Ok(settings)
+}
+
+fn with_default_file_target(
+    mut settings: LocalSettings,
+    device_id: DeviceId,
+) -> AppResult<LocalSettings> {
+    if !settings
+        .paired_peers
+        .iter()
+        .any(|peer| peer.device.id == device_id)
+    {
+        return Err(AppError::Message("Paired device not found.".to_string()));
+    }
+
+    for peer in &mut settings.paired_peers {
+        peer.is_default_file_target = peer.device.id == device_id;
+    }
+
+    Ok(settings)
+}
+
+fn without_pairing(mut settings: LocalSettings, device_id: DeviceId) -> AppResult<LocalSettings> {
+    let previous_len = settings.paired_peers.len();
     settings
         .paired_peers
         .retain(|peer| peer.device.id != device_id);
-    state.settings_store.save(&settings)?;
-    state
-        .registry
-        .lock()
-        .unwrap()
-        .set_state(&device_id, PeerConnectionState::Offline);
-    Ok(settings.clone())
+    if settings.paired_peers.len() == previous_len {
+        return Err(AppError::Message("Paired device not found.".to_string()));
+    }
+    Ok(settings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{DeviceInfo, PeerConnectionState};
+
+    fn local_settings(peers: Vec<PairedPeer>) -> LocalSettings {
+        LocalSettings {
+            local_device: DeviceInfo::new_local("Windows Desk", 45731),
+            paired_peers: peers,
+            autostart_enabled: true,
+        }
+    }
+
+    fn paired_peer(name: &str, is_default_file_target: bool) -> PairedPeer {
+        PairedPeer {
+            device: DeviceInfo::new_local(name, 45731),
+            receive_clipboard: true,
+            is_default_file_target,
+            state: PeerConnectionState::Connected,
+        }
+    }
+
+    #[test]
+    fn unknown_default_target_preserves_existing_default() {
+        let first = paired_peer("MacBook", true);
+        let second = paired_peer("Linux Desk", false);
+        let settings = local_settings(vec![first.clone(), second.clone()]);
+
+        let result = with_default_file_target(settings.clone(), DeviceId::new());
+
+        assert!(matches!(result, Err(AppError::Message(_))));
+        assert!(settings.paired_peers[0].is_default_file_target);
+        assert!(!settings.paired_peers[1].is_default_file_target);
+    }
+
+    #[test]
+    fn default_target_update_makes_exactly_one_peer_default() {
+        let first = paired_peer("MacBook", true);
+        let second = paired_peer("Linux Desk", false);
+        let target_id = second.device.id.clone();
+        let settings = local_settings(vec![first, second]);
+
+        let updated = with_default_file_target(settings, target_id.clone()).unwrap();
+
+        assert_eq!(
+            updated
+                .paired_peers
+                .iter()
+                .filter(|peer| peer.is_default_file_target)
+                .count(),
+            1
+        );
+        assert!(updated
+            .paired_peers
+            .iter()
+            .any(|peer| peer.device.id == target_id && peer.is_default_file_target));
+    }
+
+    #[test]
+    fn clear_pairing_removes_peer() {
+        let first = paired_peer("MacBook", true);
+        let second = paired_peer("Linux Desk", false);
+        let removed_id = first.device.id.clone();
+        let settings = local_settings(vec![first, second.clone()]);
+
+        let updated = without_pairing(settings, removed_id.clone()).unwrap();
+
+        assert_eq!(updated.paired_peers, vec![second]);
+        assert!(!updated
+            .paired_peers
+            .iter()
+            .any(|peer| peer.device.id == removed_id));
+    }
+
+    #[test]
+    fn clear_pairing_errors_on_unknown_id() {
+        let settings = local_settings(vec![paired_peer("MacBook", true)]);
+
+        let result = without_pairing(settings, DeviceId::new());
+
+        assert!(matches!(result, Err(AppError::Message(_))));
+    }
 }

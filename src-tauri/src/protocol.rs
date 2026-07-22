@@ -108,6 +108,13 @@ mod tests {
 
         assert_eq!(json["type"], "discovery");
         assert_eq!(json["protocol_version"], PROTOCOL_VERSION);
+        assert!(json["device"].is_object());
+        let device_id = json["device"]["id"].as_str().unwrap();
+        uuid::Uuid::parse_str(device_id).unwrap();
+        assert!(json["device"]["app_version"].is_string());
+        assert!(json["device"].get("appVersion").is_none());
+        assert!(json["device"].get("protocolVersion").is_none());
+        assert_eq!(json["device"]["protocol_version"], PROTOCOL_VERSION);
     }
 
     #[test]
@@ -126,7 +133,8 @@ mod tests {
         assert_eq!(json["protocol_version"], PROTOCOL_VERSION);
         assert_eq!(json["session_id"], "abc123");
         assert_eq!(json["accepted"], false);
-        assert!(json["from_device_id"].is_string());
+        let from_device_id = json["from_device_id"].as_str().unwrap();
+        uuid::Uuid::parse_str(from_device_id).unwrap();
         assert_eq!(json["reason"], "invalid code");
         assert!(json.get("fromDeviceId").is_none());
         assert!(json.get("protocolVersion").is_none());

@@ -1,3 +1,4 @@
+mod discovery;
 mod domain;
 mod pairing;
 mod protocol;

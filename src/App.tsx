@@ -14,25 +14,55 @@ function deviceIdText(id: DeviceId): string {
   return id
 }
 
-function PeerCard({ peer, refresh }: { peer: PairedPeer; refresh: () => Promise<void> }) {
+function formatInvokeError(err: unknown, fallback: string): string {
+  if (err instanceof Error) return err.message
+  if (typeof err === 'string') return err
+  if (err && typeof err === 'object' && 'message' in err) {
+    const message = (err as { message?: unknown }).message
+    if (typeof message === 'string') return message
+  }
+  return fallback
+}
+
+function PeerCard({
+  peer,
+  refresh,
+  onError,
+}: {
+  peer: PairedPeer
+  refresh: () => Promise<void>
+  onError: (message: string) => void
+}) {
   async function toggleClipboard() {
-    await setReceiveClipboard(peer.device.id, !peer.receive_clipboard)
-    await refresh()
+    try {
+      await setReceiveClipboard(peer.device.id, !peer.receive_clipboard)
+      await refresh()
+    } catch (err) {
+      onError(formatInvokeError(err, 'Failed to update clipboard setting.'))
+    }
   }
 
   async function makeDefaultTarget() {
-    await setDefaultFileTarget(peer.device.id)
-    await refresh()
+    try {
+      await setDefaultFileTarget(peer.device.id)
+      await refresh()
+    } catch (err) {
+      onError(formatInvokeError(err, 'Failed to set default file target.'))
+    }
   }
 
   async function removePairing() {
-    await clearPairing(peer.device.id)
-    await refresh()
+    try {
+      await clearPairing(peer.device.id)
+      await refresh()
+    } catch (err) {
+      onError(formatInvokeError(err, 'Failed to clear pairing.'))
+    }
   }
 
   return (
     <article className="peer-card">
-      <div>
+      <div className="peer-details">
         <h3>{peer.device.name}</h3>
         <p>{peer.state}</p>
         <code>{deviceIdText(peer.device.id)}</code>
@@ -62,7 +92,7 @@ export default function App() {
       setDashboard(await getDashboardState())
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load dashboard state.')
+      setError(formatInvokeError(err, 'Failed to load dashboard state.'))
     }
   }
 
@@ -71,13 +101,17 @@ export default function App() {
       await startPairing()
       await refresh()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start pairing.')
+      setError(formatInvokeError(err, 'Failed to start pairing.'))
     }
   }
 
   async function stopPairing() {
-    await cancelPairing()
-    await refresh()
+    try {
+      await cancelPairing()
+      await refresh()
+    } catch (err) {
+      setError(formatInvokeError(err, 'Failed to cancel pairing.'))
+    }
   }
 
   useEffect(() => {
@@ -125,7 +159,12 @@ export default function App() {
         ) : (
           <div className="peer-list">
             {dashboard.paired_devices.map((peer) => (
-              <PeerCard key={deviceIdText(peer.device.id)} peer={peer} refresh={refresh} />
+              <PeerCard
+                key={deviceIdText(peer.device.id)}
+                peer={peer}
+                refresh={refresh}
+                onError={setError}
+              />
             ))}
           </div>
         )}
@@ -139,7 +178,7 @@ export default function App() {
           <div className="peer-list">
             {dashboard.discovered_devices.map((device) => (
               <article className="peer-card" key={deviceIdText(device.id)}>
-                <div>
+                <div className="peer-details">
                   <h3>{device.name}</h3>
                   <p>Available to pair</p>
                   <code>{deviceIdText(device.id)}</code>

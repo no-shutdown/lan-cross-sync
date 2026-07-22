@@ -95,6 +95,11 @@ button:disabled {
   padding: 12px;
 }
 
+.peer-details {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .peer-card code {
   color: #607086;
   display: block;
@@ -103,12 +108,14 @@ button:disabled {
   max-width: 420px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .peer-actions {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
+  flex-shrink: 0;
   gap: 10px;
   justify-content: flex-end;
 }

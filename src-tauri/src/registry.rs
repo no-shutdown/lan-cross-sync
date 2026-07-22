@@ -17,7 +17,12 @@ impl PeerRegistry {
             self.discovered.insert(device.id.clone(), device);
         } else if let Some(peer) = self.paired.get_mut(&device.id) {
             peer.device = device;
-            peer.state = PeerConnectionState::Discovered;
+            if matches!(
+                peer.state,
+                PeerConnectionState::Offline | PeerConnectionState::Error
+            ) {
+                peer.state = PeerConnectionState::Discovered;
+            }
         }
     }
 
@@ -79,5 +84,45 @@ mod tests {
         registry.mark_discovered(device);
 
         assert_eq!(registry.paired()[0].state, PeerConnectionState::Discovered);
+    }
+
+    #[test]
+    fn paired_connected_device_stays_connected_when_rediscovered() {
+        let mut registry = PeerRegistry::new();
+        let device = DeviceInfo::new_local("MacBook", 45731);
+        registry.set_paired(PairedPeer {
+            device: device.clone(),
+            receive_clipboard: false,
+            is_default_file_target: false,
+            state: PeerConnectionState::Connected,
+        });
+
+        registry.mark_discovered(device);
+
+        assert_eq!(registry.paired()[0].state, PeerConnectionState::Connected);
+    }
+
+    #[test]
+    fn rediscovery_updates_device_metadata_and_preserves_preferences() {
+        let mut registry = PeerRegistry::new();
+        let device = DeviceInfo::new_local("MacBook", 45731);
+        registry.set_paired(PairedPeer {
+            device: device.clone(),
+            receive_clipboard: true,
+            is_default_file_target: true,
+            state: PeerConnectionState::Connected,
+        });
+
+        let mut updated_device = device;
+        updated_device.name = "MacBook Pro".to_string();
+        updated_device.port = 45732;
+        registry.mark_discovered(updated_device);
+
+        let peer = &registry.paired()[0];
+        assert_eq!(peer.device.name, "MacBook Pro");
+        assert_eq!(peer.device.port, 45732);
+        assert!(peer.receive_clipboard);
+        assert!(peer.is_default_file_target);
+        assert_eq!(peer.state, PeerConnectionState::Connected);
     }
 }

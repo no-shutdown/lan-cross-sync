@@ -30,7 +30,6 @@ impl SettingsStore {
         let settings = LocalSettings {
             local_device: DeviceInfo::new_local(device_name, DEFAULT_DISCOVERY_PORT),
             paired_peers: Vec::new(),
-            autostart_enabled: true,
         };
         self.save(&settings)?;
         Ok(settings)
@@ -79,7 +78,6 @@ mod tests {
 
         assert_eq!(settings, loaded);
         assert_eq!(loaded.local_device.name, "Windows Desk");
-        assert!(loaded.autostart_enabled);
         assert!(store.path().exists());
     }
 

@@ -48,6 +48,17 @@ impl PeerRegistry {
         }
     }
 
+    pub fn sync_preferences(&mut self, peers: &[PairedPeer]) {
+        for peer in peers {
+            if let Some(current) = self.paired.get_mut(&peer.device.id) {
+                current.receive_clipboard = peer.receive_clipboard;
+                current.is_default_file_target = peer.is_default_file_target;
+            } else {
+                self.set_paired(peer.clone());
+            }
+        }
+    }
+
     pub fn remove_pairing(&mut self, id: &DeviceId) {
         self.paired.remove(id);
         self.discovered.remove(id);
@@ -187,5 +198,29 @@ mod tests {
 
         assert!(registry.paired().is_empty());
         assert!(registry.discovered().is_empty());
+    }
+
+    #[test]
+    fn sync_preferences_preserves_runtime_state() {
+        let mut peer = PairedPeer {
+            device: DeviceInfo::new_local("MacBook", 45731),
+            receive_clipboard: false,
+            is_default_file_target: false,
+            state: PeerConnectionState::Connected,
+        };
+        let id = peer.device.id.clone();
+        let mut registry = PeerRegistry::from_paired(vec![peer.clone()]);
+        peer.receive_clipboard = true;
+        peer.is_default_file_target = true;
+        peer.state = PeerConnectionState::Offline;
+
+        registry.sync_preferences(&[peer]);
+
+        let paired = registry.paired();
+        assert_eq!(paired.len(), 1);
+        assert_eq!(paired[0].device.id, id);
+        assert!(paired[0].receive_clipboard);
+        assert!(paired[0].is_default_file_target);
+        assert_eq!(paired[0].state, PeerConnectionState::Connected);
     }
 }

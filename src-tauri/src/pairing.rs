@@ -32,6 +32,16 @@ impl PairingSession {
         }
     }
 
+    #[cfg(test)]
+    pub fn expired_for_test(local_device: DeviceInfo, code: impl Into<String>) -> Self {
+        Self {
+            session_id: Uuid::new_v4().to_string(),
+            code: code.into(),
+            local_device,
+            created_at: Instant::now() - PAIRING_CODE_TTL - Duration::from_secs(1),
+        }
+    }
+
     pub fn verify_code(&self, candidate: &str) -> bool {
         !self.is_expired() && self.code == candidate
     }
@@ -70,12 +80,7 @@ mod tests {
     #[test]
     fn expired_session_rejects_matching_code() {
         let device = DeviceInfo::new_local("MacBook", 45731);
-        let session = PairingSession {
-            session_id: Uuid::new_v4().to_string(),
-            code: "123456".to_string(),
-            local_device: device,
-            created_at: Instant::now() - PAIRING_CODE_TTL - Duration::from_secs(1),
-        };
+        let session = PairingSession::expired_for_test(device, "123456");
 
         assert!(session.is_expired());
         assert!(!session.verify_code("123456"));

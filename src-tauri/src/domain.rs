@@ -46,7 +46,6 @@ pub struct PairedPeer {
 pub struct LocalSettings {
     pub local_device: DeviceInfo,
     pub paired_peers: Vec<PairedPeer>,
-    pub autostart_enabled: bool,
 }
 
 impl DeviceId {

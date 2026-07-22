@@ -1803,6 +1803,8 @@ $env:PATH = 'C:\Users\13565\.cargo\bin;' + $env:PATH
 pnpm tauri dev
 ```
 
+Execution note: During final review fixes, autostart state was made OS-plugin-owned instead of persisted in `LocalSettings`. Existing settings files with the previous `autostart_enabled` field still load because Serde ignores unknown JSON fields by default.
+
 - [x] **Step 2: Verify local settings were created**
 
 Run this in a second PowerShell terminal:

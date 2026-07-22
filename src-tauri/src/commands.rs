@@ -28,18 +28,16 @@ pub struct DashboardState {
 
 #[tauri::command]
 pub fn get_dashboard_state(state: State<'_, AppState>) -> AppResult<DashboardState> {
-    let settings = state.settings.lock().unwrap().clone();
+    let mut settings = state.settings.lock().unwrap().clone();
     let registry = state.registry.lock().unwrap();
-    let active_pairing_code = state
-        .active_pairing
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|session| session.code.clone());
+    let mut active_pairing = state.active_pairing.lock().unwrap();
+    let active_pairing_code = active_pairing_code(&mut active_pairing);
+    let paired_devices = registry.paired();
+    settings.paired_peers = paired_devices.clone();
 
     Ok(DashboardState {
-        paired_devices: settings.paired_peers.clone(),
         settings,
+        paired_devices,
         discovered_devices: registry.discovered(),
         active_pairing_code,
     })
@@ -110,6 +108,11 @@ pub fn set_receive_clipboard(
     let next = with_receive_clipboard(settings.clone(), device_id, enabled)?;
     state.settings_store.save(&next)?;
     *settings = next.clone();
+    state
+        .registry
+        .lock()
+        .unwrap()
+        .sync_preferences(&next.paired_peers);
     Ok(next)
 }
 
@@ -122,6 +125,11 @@ pub fn set_default_file_target(
     let next = with_default_file_target(settings.clone(), device_id)?;
     state.settings_store.save(&next)?;
     *settings = next.clone();
+    state
+        .registry
+        .lock()
+        .unwrap()
+        .sync_preferences(&next.paired_peers);
     Ok(next)
 }
 
@@ -179,6 +187,18 @@ fn without_pairing(mut settings: LocalSettings, device_id: DeviceId) -> AppResul
     Ok(settings)
 }
 
+fn active_pairing_code(active_pairing: &mut Option<PairingSession>) -> Option<String> {
+    if active_pairing
+        .as_ref()
+        .is_some_and(PairingSession::is_expired)
+    {
+        *active_pairing = None;
+        return None;
+    }
+
+    active_pairing.as_ref().map(|session| session.code.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,7 +208,6 @@ mod tests {
         LocalSettings {
             local_device: DeviceInfo::new_local("Windows Desk", 45731),
             paired_peers: peers,
-            autostart_enabled: true,
         }
     }
 
@@ -260,5 +279,27 @@ mod tests {
         let result = without_pairing(settings, DeviceId::new());
 
         assert!(matches!(result, Err(AppError::Message(_))));
+    }
+
+    #[test]
+    fn active_pairing_code_clears_expired_session() {
+        let device = DeviceInfo::new_local("Windows Desk", 45731);
+        let mut active_pairing = Some(PairingSession::expired_for_test(device, "123456"));
+
+        let code = active_pairing_code(&mut active_pairing);
+
+        assert_eq!(code, None);
+        assert!(active_pairing.is_none());
+    }
+
+    #[test]
+    fn active_pairing_code_returns_unexpired_code() {
+        let device = DeviceInfo::new_local("Windows Desk", 45731);
+        let mut active_pairing = Some(PairingSession::with_code_for_test(device, "123456"));
+
+        let code = active_pairing_code(&mut active_pairing);
+
+        assert_eq!(code, Some("123456".to_string()));
+        assert!(active_pairing.is_some());
     }
 }

@@ -1,6 +1,7 @@
 mod domain;
 mod pairing;
 mod protocol;
+mod registry;
 mod settings;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/

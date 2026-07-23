@@ -8,6 +8,7 @@ Implemented:
 
 - Local device identity persisted to `settings.json`.
 - Versioned LAN discovery packet encoding, decoding, and periodic broadcast.
+- LAN discovery receive loop with malformed-packet and self-device filtering.
 - Pairing state with 6-digit temporary codes.
 - Runtime peer registry for discovered and paired devices.
 - Tauri command layer for dashboard state and pairing controls.
@@ -17,11 +18,16 @@ Implemented:
 
 Deferred:
 
-- Discovery receive loop and live population from other machines.
 - Full two-device pairing handshake.
 - Clipboard text/image sync.
 - File and folder transfer.
 - Packaging and cross-machine acceptance tests.
+
+## Handoff
+
+The recommended implementation order and acceptance criteria are documented in
+[`docs/DEVELOPMENT_ROADMAP.md`](docs/DEVELOPMENT_ROADMAP.md). Start from the
+latest commit and keep each iteration independently buildable and testable.
 
 ## Development
 

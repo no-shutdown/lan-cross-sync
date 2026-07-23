@@ -2,6 +2,7 @@ use crate::domain::{DeviceId, DeviceInfo, PairedPeer, PeerConnectionState};
 use crate::settings::DEFAULT_DISCOVERY_PORT;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, Default)]
 pub struct PeerRegistry {
@@ -9,6 +10,7 @@ pub struct PeerRegistry {
     paired: HashMap<DeviceId, PairedPeer>,
     discovery_endpoints: HashMap<DeviceId, SocketAddr>,
     transport_endpoints: HashMap<DeviceId, SocketAddr>,
+    last_seen: HashMap<DeviceId, Instant>,
 }
 
 impl PeerRegistry {
@@ -27,6 +29,7 @@ impl PeerRegistry {
             paired,
             discovery_endpoints: HashMap::new(),
             transport_endpoints: HashMap::new(),
+            last_seen: HashMap::new(),
         }
     }
 
@@ -37,6 +40,7 @@ impl PeerRegistry {
 
     pub fn mark_discovered_at(&mut self, device: DeviceInfo, source: SocketAddr) {
         let ip = source.ip();
+        self.last_seen.insert(device.id.clone(), Instant::now());
         self.discovery_endpoints.insert(
             device.id.clone(),
             SocketAddr::new(ip, DEFAULT_DISCOVERY_PORT),
@@ -87,6 +91,27 @@ impl PeerRegistry {
         self.discovered.remove(id);
         self.discovery_endpoints.remove(id);
         self.transport_endpoints.remove(id);
+        self.last_seen.remove(id);
+    }
+
+    pub fn prune_expired(&mut self, now: Instant, ttl: Duration) {
+        let expired = self
+            .last_seen
+            .iter()
+            .filter_map(|(id, seen_at)| {
+                (now.saturating_duration_since(*seen_at) > ttl).then_some(id.clone())
+            })
+            .collect::<Vec<_>>();
+
+        for id in expired {
+            self.last_seen.remove(&id);
+            if self.paired.contains_key(&id) {
+                continue;
+            }
+            self.discovered.remove(&id);
+            self.discovery_endpoints.remove(&id);
+            self.transport_endpoints.remove(&id);
+        }
     }
 
     pub fn discovery_endpoint(&self, id: &DeviceId) -> Option<SocketAddr> {
@@ -121,6 +146,7 @@ impl PeerRegistry {
 mod tests {
     use super::*;
     use std::net::SocketAddr;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn discovered_device_moves_to_paired() {
@@ -289,6 +315,23 @@ mod tests {
 
         registry.remove_pairing(&device_id);
 
+        assert_eq!(registry.discovery_endpoint(&device_id), None);
+        assert_eq!(registry.transport_endpoint(&device_id), None);
+    }
+
+    #[test]
+    fn expired_unpaired_discovery_is_removed_from_available_devices() {
+        let mut registry = PeerRegistry::new();
+        let device = DeviceInfo::new_local("MacBook", 46001);
+        let device_id = device.id.clone();
+        let source: SocketAddr = "192.0.2.10:54321".parse().unwrap();
+        let seen_at = Instant::now();
+
+        registry.mark_discovered_at(device, source);
+        registry.last_seen.insert(device_id.clone(), seen_at);
+        registry.prune_expired(seen_at + Duration::from_secs(11), Duration::from_secs(10));
+
+        assert!(registry.discovered().is_empty());
         assert_eq!(registry.discovery_endpoint(&device_id), None);
         assert_eq!(registry.transport_endpoint(&device_id), None);
     }

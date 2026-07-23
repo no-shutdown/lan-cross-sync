@@ -8,7 +8,9 @@ use crate::{
     registry::PeerRegistry,
 };
 use anyhow::{Context, Result};
+use if_addrs::{get_if_addrs, IfAddr};
 use std::{
+    collections::HashSet,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::Arc,
 };
@@ -19,9 +21,38 @@ use tokio::{
 
 pub const DISCOVERY_BROADCAST_ADDR: Ipv4Addr = Ipv4Addr::new(255, 255, 255, 255);
 pub const DISCOVERY_INTERVAL: Duration = Duration::from_secs(3);
+pub const DISCOVERY_TTL: Duration = Duration::from_secs(10);
 
 pub fn discovery_socket_addr(port: u16) -> SocketAddrV4 {
     SocketAddrV4::new(DISCOVERY_BROADCAST_ADDR, port)
+}
+
+pub fn discovery_targets(
+    port: u16,
+    interface_broadcasts: impl IntoIterator<Item = Ipv4Addr>,
+) -> Vec<SocketAddrV4> {
+    let mut seen = HashSet::new();
+    std::iter::once(DISCOVERY_BROADCAST_ADDR)
+        .chain(interface_broadcasts)
+        .filter(|address| seen.insert(*address))
+        .map(|address| SocketAddrV4::new(address, port))
+        .collect()
+}
+
+fn interface_broadcasts() -> Result<Vec<Ipv4Addr>> {
+    get_if_addrs()
+        .context("failed to enumerate network interfaces")
+        .map(|interfaces| {
+            interfaces
+                .into_iter()
+                .filter_map(|interface| match interface.addr {
+                    IfAddr::V4(address) if !address.ip.is_loopback() => address
+                        .broadcast
+                        .filter(|broadcast| !broadcast.is_unspecified()),
+                    _ => None,
+                })
+                .collect()
+        })
 }
 
 pub async fn bind_discovery_socket(port: u16) -> Result<UdpSocket> {
@@ -73,16 +104,24 @@ pub async fn announce_loop(device: DeviceInfo, port: u16) -> Result<()> {
     socket
         .set_broadcast(true)
         .context("failed to enable discovery UDP broadcast")?;
-    let target = discovery_socket_addr(port);
+    let targets = match interface_broadcasts() {
+        Ok(addresses) => discovery_targets(port, addresses),
+        Err(err) => {
+            tracing::warn!(?err, "using global discovery broadcast only");
+            vec![discovery_socket_addr(port)]
+        }
+    };
     let payload = encode_discovery(device)?;
     let mut interval = time::interval(DISCOVERY_INTERVAL);
 
     loop {
         interval.tick().await;
-        socket
-            .send_to(&payload, target)
-            .await
-            .with_context(|| format!("failed to send discovery packet to {target}"))?;
+        for target in &targets {
+            socket
+                .send_to(&payload, target)
+                .await
+                .with_context(|| format!("failed to send discovery packet to {target}"))?;
+        }
     }
 }
 
@@ -91,14 +130,23 @@ pub async fn receive_loop_with_pairing(
     pairing: Arc<PairingRuntime>,
 ) -> Result<()> {
     let mut buffer = vec![0_u8; 64 * 1024];
+    let mut cleanup = time::interval(DISCOVERY_INTERVAL);
 
     loop {
-        let (len, source) = socket
-            .recv_from(&mut buffer)
-            .await
-            .context("failed to receive LAN message")?;
-        if let Err(err) = handle_lan_message(&socket, &buffer[..len], source, &pairing).await {
-            tracing::debug!(?err, %source, "ignored invalid LAN message");
+        tokio::select! {
+            result = socket.recv_from(&mut buffer) => {
+                let (len, source) = result.context("failed to receive LAN message")?;
+                if let Err(err) = handle_lan_message(&socket, &buffer[..len], source, &pairing).await {
+                    tracing::debug!(?err, %source, "ignored invalid LAN message");
+                }
+            }
+            _ = cleanup.tick() => {
+                pairing
+                    .registry
+                    .lock()
+                    .unwrap()
+                    .prune_expired(std::time::Instant::now(), DISCOVERY_TTL);
+            }
         }
     }
 }
@@ -339,6 +387,22 @@ mod tests {
 
         assert_eq!(*addr.ip(), DISCOVERY_BROADCAST_ADDR);
         assert_eq!(addr.port(), 45731);
+    }
+
+    #[test]
+    fn discovery_targets_include_interface_broadcasts_without_duplicates() {
+        let targets = discovery_targets(
+            45731,
+            [
+                Ipv4Addr::new(192, 168, 1, 255),
+                DISCOVERY_BROADCAST_ADDR,
+                Ipv4Addr::new(192, 168, 1, 255),
+            ],
+        );
+
+        assert_eq!(targets.len(), 2);
+        assert!(targets.contains(&discovery_socket_addr(45731)));
+        assert!(targets.contains(&SocketAddrV4::new(Ipv4Addr::new(192, 168, 1, 255), 45731,)));
     }
 
     #[test]

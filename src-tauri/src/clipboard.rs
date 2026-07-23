@@ -148,6 +148,9 @@ impl ClipboardService {
         let mut interval = time::interval(CLIPBOARD_POLL_INTERVAL);
         loop {
             interval.tick().await;
+            if !self.has_active_target() {
+                continue;
+            }
             let payload = tokio::task::spawn_blocking(read_system_clipboard)
                 .await
                 .map_err(|err| anyhow::anyhow!("clipboard worker stopped: {err}"))?;
@@ -195,6 +198,11 @@ impl ClipboardService {
         }
     }
 
+    fn has_active_target(&self) -> bool {
+        let settings = self.settings.lock().unwrap().clone();
+        has_active_clipboard_target(&settings, |peer_id| self.transport.is_connected(peer_id))
+    }
+
     pub fn handle_remote(
         &self,
         peer_id: &DeviceId,
@@ -218,6 +226,16 @@ impl ClipboardService {
         write_system_clipboard(&event.payload)?;
         Ok(true)
     }
+}
+
+fn has_active_clipboard_target<F>(settings: &LocalSettings, is_connected: F) -> bool
+where
+    F: Fn(&DeviceId) -> bool,
+{
+    settings
+        .paired_peers
+        .iter()
+        .any(|peer| peer.receive_clipboard && is_connected(&peer.device.id))
 }
 
 fn event_from_payload(
@@ -338,7 +356,46 @@ mod base64_bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::DeviceInfo;
+    use crate::domain::{DeviceInfo, PairedPeer, PeerConnectionState};
+
+    fn settings_with_peer(receive_clipboard: bool) -> LocalSettings {
+        LocalSettings {
+            local_device: DeviceInfo::new_local("Windows Desk", 45731),
+            paired_peers: vec![PairedPeer {
+                device: DeviceInfo::new_local("MacBook", 45731),
+                receive_clipboard,
+                is_default_file_target: false,
+                state: PeerConnectionState::Offline,
+            }],
+            ui_locale: "zh-CN".to_string(),
+        }
+    }
+
+    #[test]
+    fn clipboard_polling_is_disabled_without_paired_devices() {
+        let settings = LocalSettings {
+            local_device: DeviceInfo::new_local("Windows Desk", 45731),
+            paired_peers: Vec::new(),
+            ui_locale: "zh-CN".to_string(),
+        };
+
+        assert!(!has_active_clipboard_target(&settings, |_| true));
+    }
+
+    #[test]
+    fn clipboard_polling_requires_connected_receiver() {
+        let settings = settings_with_peer(true);
+
+        assert!(!has_active_clipboard_target(&settings, |_| false));
+        assert!(has_active_clipboard_target(&settings, |_| true));
+    }
+
+    #[test]
+    fn clipboard_polling_ignores_peers_that_disabled_receiving() {
+        let settings = settings_with_peer(false);
+
+        assert!(!has_active_clipboard_target(&settings, |_| true));
+    }
 
     #[test]
     fn text_event_has_id_sequence_timestamp_and_content_hash() {

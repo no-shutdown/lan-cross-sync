@@ -99,8 +99,7 @@ pub fn set_autostart_enabled(_app: tauri::AppHandle, _enabled: bool) -> AppResul
 
 #[tauri::command]
 pub fn start_pairing(state: State<'_, AppState>) -> AppResult<String> {
-    let local_device = state.settings.lock().unwrap().local_device.clone();
-    let session = PairingSession::new(local_device);
+    let session = PairingSession::new();
     let code = session.code.clone();
     *state.active_pairing.lock().unwrap() = Some(session);
     state.pairing.clear_error();
@@ -403,8 +402,7 @@ mod tests {
 
     #[test]
     fn active_pairing_code_clears_expired_session() {
-        let device = DeviceInfo::new_local("Windows Desk", 45731);
-        let mut active_pairing = Some(PairingSession::expired_for_test(device, "123456"));
+        let mut active_pairing = Some(PairingSession::expired_for_test("123456"));
 
         let code = active_pairing_code(&mut active_pairing);
 
@@ -414,8 +412,7 @@ mod tests {
 
     #[test]
     fn active_pairing_code_returns_unexpired_code() {
-        let device = DeviceInfo::new_local("Windows Desk", 45731);
-        let mut active_pairing = Some(PairingSession::with_code_for_test(device, "123456"));
+        let mut active_pairing = Some(PairingSession::with_code_for_test("123456"));
 
         let code = active_pairing_code(&mut active_pairing);
 

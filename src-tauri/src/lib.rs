@@ -1,3 +1,5 @@
+#![allow(linker_messages)]
+
 mod clipboard;
 mod commands;
 mod discovery;

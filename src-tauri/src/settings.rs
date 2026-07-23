@@ -1,9 +1,10 @@
-use crate::domain::{default_ui_locale, DeviceInfo, LocalSettings, PairedPeer};
+#[cfg(test)]
+use crate::domain::PairedPeer;
+use crate::domain::{default_ui_locale, DeviceInfo, LocalSettings};
 use anyhow::{Context, Result};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+#[cfg(test)]
+use std::path::Path;
+use std::{fs, path::PathBuf};
 
 pub const DEFAULT_DISCOVERY_PORT: u16 = 45731;
 
@@ -49,6 +50,7 @@ impl SettingsStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn add_or_update_peer(&self, peer: PairedPeer) -> Result<LocalSettings> {
         let mut settings = self.load_or_create("LAN Cross Sync")?;
         settings
@@ -59,6 +61,7 @@ impl SettingsStore {
         Ok(settings)
     }
 
+    #[cfg(test)]
     pub fn path(&self) -> &Path {
         &self.path
     }

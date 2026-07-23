@@ -10,7 +10,7 @@ use crate::{
 use anyhow::{Context, Result};
 use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 use tokio::{
     net::UdpSocket,
@@ -42,14 +42,6 @@ pub fn decode_discovery(bytes: &[u8]) -> Result<Option<DeviceInfo>> {
     }
 }
 
-pub fn apply_discovery_packet(
-    bytes: &[u8],
-    local_device_id: &DeviceId,
-    registry: &mut PeerRegistry,
-) -> Result<bool> {
-    apply_discovery_packet_without_endpoint(bytes, local_device_id, registry)
-}
-
 pub fn apply_discovery_packet_at(
     bytes: &[u8],
     local_device_id: &DeviceId,
@@ -65,23 +57,6 @@ pub fn apply_discovery_packet_at(
     }
 
     registry.mark_discovered_at(device, source);
-    Ok(true)
-}
-
-fn apply_discovery_packet_without_endpoint(
-    bytes: &[u8],
-    local_device_id: &DeviceId,
-    registry: &mut PeerRegistry,
-) -> Result<bool> {
-    let Some(device) = decode_discovery(bytes)? else {
-        return Ok(false);
-    };
-
-    if device.id == *local_device_id {
-        return Ok(false);
-    }
-
-    registry.mark_discovered(device);
     Ok(true)
 }
 
@@ -102,39 +77,6 @@ pub async fn announce_loop(device: DeviceInfo, port: u16) -> Result<()> {
             .send_to(&payload, target)
             .await
             .with_context(|| format!("failed to send discovery packet to {target}"))?;
-    }
-}
-
-pub async fn receive_loop(
-    local_device_id: DeviceId,
-    port: u16,
-    registry: Arc<Mutex<PeerRegistry>>,
-) -> Result<()> {
-    let socket = UdpSocket::bind(("0.0.0.0", port))
-        .await
-        .with_context(|| format!("failed to bind discovery UDP listener on port {port}"))?;
-    let mut buffer = vec![0_u8; 64 * 1024];
-
-    loop {
-        let (len, source) = socket
-            .recv_from(&mut buffer)
-            .await
-            .context("failed to receive discovery UDP packet")?;
-        let packet = &buffer[..len];
-
-        match registry.lock() {
-            Ok(mut registry) => {
-                if let Err(err) =
-                    apply_discovery_packet_at(packet, &local_device_id, source, &mut registry)
-                {
-                    tracing::debug!(?err, %source, "ignored invalid discovery packet");
-                }
-            }
-            Err(err) => {
-                tracing::error!(?err, "discovery registry lock poisoned");
-                return Ok(());
-            }
-        }
     }
 }
 
@@ -161,17 +103,15 @@ async fn handle_lan_message(
     source: SocketAddr,
     pairing: &PairingRuntime,
 ) -> Result<()> {
+    pairing.requests.lock().unwrap().clear_expired();
+    {
+        let mut registry = pairing.registry.lock().unwrap();
+        if apply_discovery_packet_at(bytes, &pairing.local_device.id, source, &mut registry)? {
+            return Ok(());
+        }
+    }
     let message = decode_message(bytes).context("failed to decode LAN message")?;
     match message {
-        LanMessage::Discovery(packet)
-            if packet.protocol_version == PROTOCOL_VERSION
-                && packet.device.protocol_version == PROTOCOL_VERSION =>
-        {
-            let mut registry = pairing.registry.lock().unwrap();
-            if packet.device.id != pairing.local_device.id {
-                registry.mark_discovered_at(packet.device, source);
-            }
-        }
         LanMessage::Discovery(_) => {}
         LanMessage::PairingRequest(request) => {
             handle_pairing_request(socket, request, source, pairing).await?;
@@ -430,7 +370,9 @@ mod tests {
         let encoded = encode_discovery(remote.clone()).unwrap();
         let mut registry = PeerRegistry::new();
 
-        let applied = apply_discovery_packet(&encoded, &local.id, &mut registry).unwrap();
+        let source: SocketAddr = "192.168.1.20:45731".parse().unwrap();
+        let applied =
+            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
 
         assert!(applied);
         assert_eq!(registry.discovered(), vec![remote]);
@@ -442,7 +384,9 @@ mod tests {
         let encoded = encode_discovery(local.clone()).unwrap();
         let mut registry = PeerRegistry::new();
 
-        let applied = apply_discovery_packet(&encoded, &local.id, &mut registry).unwrap();
+        let source: SocketAddr = "192.168.1.20:45731".parse().unwrap();
+        let applied =
+            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
 
         assert!(!applied);
         assert!(registry.discovered().is_empty());
@@ -475,7 +419,9 @@ mod tests {
             state: PeerConnectionState::Offline,
         }]);
 
-        let applied = apply_discovery_packet(&encoded, &local.id, &mut registry).unwrap();
+        let source: SocketAddr = "192.168.1.20:45731".parse().unwrap();
+        let applied =
+            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
 
         assert!(applied);
         assert!(registry.discovered().is_empty());

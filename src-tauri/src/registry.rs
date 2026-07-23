@@ -10,6 +10,7 @@ pub struct PeerRegistry {
 }
 
 impl PeerRegistry {
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -26,6 +27,7 @@ impl PeerRegistry {
         }
     }
 
+    #[cfg(test)]
     pub fn mark_discovered(&mut self, device: DeviceInfo) {
         self.upsert_discovered(device);
     }

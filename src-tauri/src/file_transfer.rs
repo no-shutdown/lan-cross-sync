@@ -386,6 +386,7 @@ impl TransferStateMachine {
         }
     }
 
+    #[cfg(test)]
     pub fn state(&self) -> TransferState {
         self.state
     }
@@ -411,6 +412,15 @@ impl TransferStateMachine {
                 self.state = TransferState::Cancelled;
                 Ok(())
             }
+        }
+    }
+
+    fn fail(&mut self) {
+        if !matches!(
+            self.state,
+            TransferState::Completed | TransferState::Cancelled
+        ) {
+            self.state = TransferState::Failed;
         }
     }
 
@@ -627,7 +637,8 @@ impl FileTransferService {
             .unwrap()
             .insert(transfer_id.to_string());
         if peer_id.1 == TransferDirection::Receiving {
-            if let Some(transfer) = self.incoming.lock().unwrap().remove(transfer_id) {
+            if let Some(mut transfer) = self.incoming.lock().unwrap().remove(transfer_id) {
+                let _ = transfer.state.cancel();
                 cleanup_incoming(&transfer);
             }
         }
@@ -725,6 +736,7 @@ impl FileTransferService {
                 format_error_code(err)
             }
         });
+        let cancelled = self.is_cancelled(&transfer_id);
         let _ = self
             .transport
             .send_message(
@@ -736,7 +748,15 @@ impl FileTransferService {
                 }),
             )
             .await;
-        self.outgoing.lock().unwrap().remove(&transfer_id);
+        if let Some(mut transfer) = self.outgoing.lock().unwrap().remove(&transfer_id) {
+            if success {
+                transfer.state.complete()?;
+            } else if cancelled {
+                let _ = transfer.state.cancel();
+            } else {
+                transfer.state.fail();
+            }
+        }
         self.cancelled.lock().unwrap().remove(&transfer_id);
         if success {
             self.emit(TransferEvent::Completed {
@@ -958,7 +978,8 @@ impl FileTransferService {
                 None => None,
             }
         };
-        if let Some(transfer) = transfer {
+        if let Some(mut transfer) = transfer {
+            let _ = transfer.state.cancel();
             cleanup_incoming(&transfer);
             self.emit(TransferEvent::Cancelled {
                 transfer_id: cancel.transfer_id,

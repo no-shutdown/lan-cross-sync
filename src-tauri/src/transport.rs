@@ -403,7 +403,7 @@ impl TransportRuntime {
             for peer_id in peer_ids {
                 let runtime = self.clone();
                 tokio::spawn(async move {
-                    let _ = runtime.connect_peer(peer_id.clone()).await;
+                    let _ = runtime.connect_peer_with_retry(peer_id.clone(), 3).await;
                     runtime.unmark_connecting(&peer_id);
                 });
             }

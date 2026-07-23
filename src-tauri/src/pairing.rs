@@ -155,35 +155,32 @@ impl PairingRuntime {
 pub struct PairingSession {
     pub session_id: String,
     pub code: String,
-    pub local_device: DeviceInfo,
     created_at: Instant,
 }
 
 impl PairingSession {
-    pub fn new(local_device: DeviceInfo) -> Self {
+    pub fn new() -> Self {
         Self {
             session_id: Uuid::new_v4().to_string(),
             code: generate_pairing_code(),
-            local_device,
-            created_at: Instant::now(),
-        }
-    }
-
-    pub fn with_code_for_test(local_device: DeviceInfo, code: impl Into<String>) -> Self {
-        Self {
-            session_id: Uuid::new_v4().to_string(),
-            code: code.into(),
-            local_device,
             created_at: Instant::now(),
         }
     }
 
     #[cfg(test)]
-    pub fn expired_for_test(local_device: DeviceInfo, code: impl Into<String>) -> Self {
+    pub fn with_code_for_test(code: impl Into<String>) -> Self {
         Self {
             session_id: Uuid::new_v4().to_string(),
             code: code.into(),
-            local_device,
+            created_at: Instant::now(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn expired_for_test(code: impl Into<String>) -> Self {
+        Self {
+            session_id: Uuid::new_v4().to_string(),
+            code: code.into(),
             created_at: Instant::now() - PAIRING_CODE_TTL - Duration::from_secs(1),
         }
     }
@@ -216,8 +213,7 @@ mod tests {
 
     #[test]
     fn session_accepts_matching_code() {
-        let device = DeviceInfo::new_local("MacBook", 45731);
-        let session = PairingSession::with_code_for_test(device, "123456");
+        let session = PairingSession::with_code_for_test("123456");
 
         assert!(session.verify_code("123456"));
         assert!(!session.verify_code("654321"));
@@ -225,8 +221,7 @@ mod tests {
 
     #[test]
     fn expired_session_rejects_matching_code() {
-        let device = DeviceInfo::new_local("MacBook", 45731);
-        let session = PairingSession::expired_for_test(device, "123456");
+        let session = PairingSession::expired_for_test("123456");
 
         assert!(session.is_expired());
         assert!(!session.verify_code("123456"));

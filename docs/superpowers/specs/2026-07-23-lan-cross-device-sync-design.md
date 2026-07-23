@@ -343,6 +343,101 @@ Likely follow-up features:
 - Optional receive directory defaults.
 - Better multi-device routing rules.
 
+## Approved Implementation Decisions
+
+This section records the decisions approved for the unattended implementation pass. The
+implementation covers iterations 2 through 7 and Simplified Chinese support. Iteration 8
+features remain explicitly out of scope: end-to-end encryption, resumable transfers,
+bandwidth limits, and clipboard history.
+
+### Pairing and protocol
+
+- Keep UDP discovery as the device-location mechanism. The runtime registry stores the
+  source socket address received with each discovery packet; addresses are not persisted
+  because DHCP can change them.
+- Increment the protocol version for the new business messages. A peer using the old
+  foundation protocol may still be visible as unsupported, but it cannot pair or transfer
+  data.
+- Pairing requests are directed to the selected device and contain a request ID, target
+  device ID, sender device information, and the six-digit code. Responses contain a stable
+  reason code rather than localized text.
+- The accepting device returns an accepted response and keeps the request pending until it
+  receives a confirmation. Both sides persist the peer only after the confirmation path;
+  retries use the same request ID and are idempotent.
+- A successful code is single-use. Invalid, expired, cancelled, self-targeted, unsupported,
+  and duplicate requests have explicit test-covered outcomes.
+- Pairing is intentionally LAN-trust based in this release. The code is not a substitute
+  for cryptographic authentication and must not be described as protection from a hostile
+  local network.
+
+### Transport
+
+- Add a Rust-owned Tokio TCP listener using the existing device service port. UDP and TCP
+  may bind the same numeric port.
+- Use a length-delimited frame with a bounded control payload. Control messages are JSON
+  envelopes with message kind and request ID; file data is streamed as bounded binary
+  chunks and is never assembled as one in-memory payload.
+- A connection starts with a device hello, rejects unpaired business messages, sends
+  periodic heartbeats, applies read/write timeouts, and updates the peer registry on
+  connect, disconnect, and reconnect.
+- One connection manager owns each paired peer. Clipboard messages have priority over file
+  chunks so a large transfer cannot make the control channel unresponsive.
+- The transport emits stable event names and error codes to the Tauri layer. It never logs
+  clipboard text, image bytes, file content, or secrets.
+
+### Clipboard
+
+- Rust watches the local system clipboard through a cross-platform clipboard implementation
+  and polls at a bounded interval suitable for desktop use.
+- Text and images share one event model containing event ID, source device ID, timestamp,
+  content type, content hash, metadata, and payload.
+- The sender sends only to paired, connected peers whose receive-clipboard setting is on.
+  The receiver records remote event IDs and hashes before writing to the local clipboard,
+  preventing rebroadcast loops.
+- Images are encoded into a portable format before transport and have a fixed compressed
+  size limit for MVP. Oversized images are rejected with a localized instruction to send
+  them as files.
+- Clipboard failures are reported as stable error keys and are not fatal to the connection.
+
+### File and folder transfer
+
+- The React drop zone receives only dropped paths. Rust scans the paths, rejects unreadable
+  entries, creates a relative-path manifest, and sends metadata before file bytes.
+- The receiver emits an incoming-transfer event. The UI opens a directory picker, then
+  sends accept or reject back to Rust.
+- Files are streamed in bounded chunks into temporary `.part` files. Relative paths are
+  normalized and traversal outside the selected destination is rejected. Completed files
+  are atomically renamed into place.
+- The MVP supports files, nested folders, progress, cancellation, and whole-transfer retry.
+  It does not overwrite silently and does not resume partial transfers.
+- Transfer progress is identified by transfer ID and includes counts and byte totals, never
+  file contents.
+
+### Simplified Chinese support
+
+- Add a typed frontend translation dictionary with `zh-CN` and `en-US` entries. Simplified
+  Chinese is the default locale; English remains available as a fallback and test locale.
+- All visible React text, validation messages, pairing errors, transfer states, empty states,
+  tray labels, and setup guidance use translation keys. Rust returns error codes, not UI
+  language strings.
+- The selected locale is persisted locally and can be changed without changing protocol or
+  device data. Missing translations fall back to English and then to the key only as a
+  developer-visible last resort.
+
+### Productization and acceptance
+
+- Keep tray residency, close-to-tray, and autostart behavior while adding clear first-run
+  guidance for Windows firewall and macOS local-network/clipboard permissions.
+- Replace the development-only CSP with a production-safe Tauri configuration and keep
+  capabilities limited to the commands and dialog operations actually used.
+- The Windows release job produces NSIS and MSI artifacts. A macOS build job produces the
+  corresponding app/DMG artifacts on macOS. Unsigned local artifacts are acceptable for
+  development acceptance; signing and notarization remain release operations.
+- Acceptance must cover two real devices for discovery, pairing, reconnect, text, image,
+  files, folders, sleep/wake, autostart, and uninstall/reinstall settings behavior. A
+  single Windows machine can cover unit and loopback tests but cannot replace the two-device
+  acceptance pass.
+
 ## Open Decisions
 
 No open MVP decisions remain from the brainstorming session.

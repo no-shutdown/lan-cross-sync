@@ -1,3 +1,4 @@
+mod clipboard;
 mod commands;
 mod discovery;
 mod domain;
@@ -8,6 +9,7 @@ mod registry;
 mod settings;
 mod transport;
 
+use clipboard::ClipboardService;
 use commands::{
     cancel_pairing, clear_pairing, get_autostart_enabled, get_dashboard_state, request_pairing,
     set_autostart_enabled, set_default_file_target, set_receive_clipboard, start_pairing, AppState,
@@ -21,7 +23,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
-use transport::{TransportEvent, TransportRuntime};
+use transport::{TransportEvent, TransportMessage, TransportRuntime};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_ID: &str = "lan-cross-sync";
@@ -54,6 +56,11 @@ pub fn run() {
             let (transport_runtime, mut transport_events) =
                 TransportRuntime::new(discovery_device.clone(), registry.clone());
             let transport = Arc::new(transport_runtime);
+            let clipboard = ClipboardService::new(
+                discovery_device.clone(),
+                settings.clone(),
+                transport.clone(),
+            );
             let pairing = Arc::new(PairingRuntime::new(
                 discovery_device.clone(),
                 settings.clone(),
@@ -99,6 +106,14 @@ pub fn run() {
                 }
             });
 
+            let clipboard_loop = clipboard.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = clipboard_loop.run().await {
+                    tracing::error!(?err, "clipboard watcher stopped");
+                }
+            });
+
+            let clipboard_events = clipboard.clone();
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = transport_events.recv().await {
                     match event {
@@ -108,8 +123,14 @@ pub fn run() {
                         TransportEvent::PeerDisconnected { peer, reason_code } => {
                             tracing::debug!(device_id = ?peer.id, %reason_code, "peer transport disconnected");
                         }
-                        TransportEvent::Message { peer, .. } => {
-                            tracing::debug!(device_id = ?peer.id, "received transport control message");
+                        TransportEvent::Message { peer, message } => {
+                            if let TransportMessage::Clipboard(clipboard_event) = message {
+                                if let Err(err) =
+                                    clipboard_events.handle_remote(&peer.id, clipboard_event)
+                                {
+                                    tracing::debug!(?err, device_id = ?peer.id, "clipboard event was rejected");
+                                }
+                            }
                         }
                     }
                 }

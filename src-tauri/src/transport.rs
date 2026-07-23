@@ -1,4 +1,5 @@
 use crate::{
+    clipboard::ClipboardEvent,
     domain::{DeviceId, DeviceInfo, PeerConnectionState},
     protocol::PROTOCOL_VERSION,
     registry::PeerRegistry,
@@ -19,7 +20,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-pub const MAX_CONTROL_FRAME_BYTES: usize = 1024 * 1024;
+pub const MAX_CONTROL_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -72,6 +73,7 @@ pub enum TransportMessage {
     Pong {
         nonce: u64,
     },
+    Clipboard(ClipboardEvent),
 }
 
 pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, TransportError> {

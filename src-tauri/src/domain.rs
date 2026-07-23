@@ -46,6 +46,12 @@ pub struct PairedPeer {
 pub struct LocalSettings {
     pub local_device: DeviceInfo,
     pub paired_peers: Vec<PairedPeer>,
+    #[serde(default = "default_ui_locale")]
+    pub ui_locale: String,
+}
+
+pub fn default_ui_locale() -> String {
+    "zh-CN".to_string()
 }
 
 impl DeviceId {
@@ -60,7 +66,7 @@ impl DeviceInfo {
             id: DeviceId::new(),
             name: name.into(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
-            protocol_version: 1,
+            protocol_version: 2,
             port,
             capabilities: vec![
                 Capability::Discovery,
@@ -81,7 +87,7 @@ mod tests {
         let device = DeviceInfo::new_local("Windows Desk", 45731);
 
         assert_eq!(device.name, "Windows Desk");
-        assert_eq!(device.protocol_version, 1);
+        assert_eq!(device.protocol_version, 2);
         assert_eq!(device.port, 45731);
         assert!(device.capabilities.contains(&Capability::Discovery));
         assert!(device.capabilities.contains(&Capability::Pairing));
@@ -102,5 +108,24 @@ mod tests {
         let decoded: PairedPeer = serde_json::from_str(&json).unwrap();
 
         assert_eq!(decoded, peer);
+    }
+
+    #[test]
+    fn old_settings_get_default_locale_when_decoded() {
+        let raw = r#"{
+            "local_device": {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "name": "Windows Desk",
+                "app_version": "0.1.0",
+                "protocol_version": 1,
+                "port": 45731,
+                "capabilities": ["discovery"]
+            },
+            "paired_peers": []
+        }"#;
+
+        let settings: LocalSettings = serde_json::from_str(raw).unwrap();
+
+        assert_eq!(settings.ui_locale, "zh-CN");
     }
 }

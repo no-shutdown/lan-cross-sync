@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use std::{
-    net::{Ipv4Addr, SocketAddrV4},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::{Arc, Mutex},
 };
 use tokio::{
@@ -39,6 +39,32 @@ pub fn decode_discovery(bytes: &[u8]) -> Result<Option<DeviceInfo>> {
 }
 
 pub fn apply_discovery_packet(
+    bytes: &[u8],
+    local_device_id: &DeviceId,
+    registry: &mut PeerRegistry,
+) -> Result<bool> {
+    apply_discovery_packet_without_endpoint(bytes, local_device_id, registry)
+}
+
+pub fn apply_discovery_packet_at(
+    bytes: &[u8],
+    local_device_id: &DeviceId,
+    source: SocketAddr,
+    registry: &mut PeerRegistry,
+) -> Result<bool> {
+    let Some(device) = decode_discovery(bytes)? else {
+        return Ok(false);
+    };
+
+    if device.id == *local_device_id {
+        return Ok(false);
+    }
+
+    registry.mark_discovered_at(device, source);
+    Ok(true)
+}
+
+fn apply_discovery_packet_without_endpoint(
     bytes: &[u8],
     local_device_id: &DeviceId,
     registry: &mut PeerRegistry,
@@ -94,7 +120,9 @@ pub async fn receive_loop(
 
         match registry.lock() {
             Ok(mut registry) => {
-                if let Err(err) = apply_discovery_packet(packet, &local_device_id, &mut registry) {
+                if let Err(err) =
+                    apply_discovery_packet_at(packet, &local_device_id, source, &mut registry)
+                {
                     tracing::debug!(?err, %source, "ignored invalid discovery packet");
                 }
             }
@@ -110,6 +138,7 @@ pub async fn receive_loop(
 mod tests {
     use super::*;
     use crate::domain::{PairedPeer, PeerConnectionState};
+    use std::net::SocketAddr;
 
     #[test]
     fn discovery_packet_round_trips_to_device_info() {
@@ -188,6 +217,21 @@ mod tests {
 
         assert!(!applied);
         assert!(registry.discovered().is_empty());
+    }
+
+    #[test]
+    fn apply_discovery_packet_at_records_source_endpoint() {
+        let local = DeviceInfo::new_local("Windows Desk", 45731);
+        let remote = DeviceInfo::new_local("MacBook", 45731);
+        let encoded = encode_discovery(remote.clone()).unwrap();
+        let source: SocketAddr = "192.168.1.20:45731".parse().unwrap();
+        let mut registry = PeerRegistry::new();
+
+        let applied =
+            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
+
+        assert!(applied);
+        assert_eq!(registry.endpoint(&remote.id), Some(source));
     }
 
     #[test]

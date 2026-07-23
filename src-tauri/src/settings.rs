@@ -1,4 +1,4 @@
-use crate::domain::{DeviceInfo, LocalSettings, PairedPeer};
+use crate::domain::{default_ui_locale, DeviceInfo, LocalSettings, PairedPeer};
 use anyhow::{Context, Result};
 use std::{
     fs,
@@ -30,6 +30,7 @@ impl SettingsStore {
         let settings = LocalSettings {
             local_device: DeviceInfo::new_local(device_name, DEFAULT_DISCOVERY_PORT),
             paired_peers: Vec::new(),
+            ui_locale: default_ui_locale(),
         };
         self.save(&settings)?;
         Ok(settings)
@@ -131,5 +132,16 @@ mod tests {
             reloaded.paired_peers[0].state,
             PeerConnectionState::Connected
         );
+    }
+
+    #[test]
+    fn settings_include_simplified_chinese_as_default_locale() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::new(dir.path().join("settings.json"));
+
+        let settings = store.load_or_create("Windows Desk").unwrap();
+        let json = serde_json::to_value(settings).unwrap();
+
+        assert_eq!(json["ui_locale"], "zh-CN");
     }
 }

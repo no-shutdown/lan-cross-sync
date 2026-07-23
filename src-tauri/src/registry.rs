@@ -1,10 +1,12 @@
 use crate::domain::{DeviceId, DeviceInfo, PairedPeer, PeerConnectionState};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 
 #[derive(Clone, Debug, Default)]
 pub struct PeerRegistry {
     discovered: HashMap<DeviceId, DeviceInfo>,
     paired: HashMap<DeviceId, PairedPeer>,
+    endpoints: HashMap<DeviceId, SocketAddr>,
 }
 
 impl PeerRegistry {
@@ -20,10 +22,20 @@ impl PeerRegistry {
         Self {
             discovered: HashMap::new(),
             paired,
+            endpoints: HashMap::new(),
         }
     }
 
     pub fn mark_discovered(&mut self, device: DeviceInfo) {
+        self.upsert_discovered(device);
+    }
+
+    pub fn mark_discovered_at(&mut self, device: DeviceInfo, endpoint: SocketAddr) {
+        self.endpoints.insert(device.id.clone(), endpoint);
+        self.upsert_discovered(device);
+    }
+
+    fn upsert_discovered(&mut self, device: DeviceInfo) {
         if !self.paired.contains_key(&device.id) {
             self.discovered.insert(device.id.clone(), device);
         } else if let Some(peer) = self.paired.get_mut(&device.id) {
@@ -62,6 +74,11 @@ impl PeerRegistry {
     pub fn remove_pairing(&mut self, id: &DeviceId) {
         self.paired.remove(id);
         self.discovered.remove(id);
+        self.endpoints.remove(id);
+    }
+
+    pub fn endpoint(&self, id: &DeviceId) -> Option<SocketAddr> {
+        self.endpoints.get(id).copied()
     }
 
     pub fn discovered(&self) -> Vec<DeviceInfo> {
@@ -76,6 +93,7 @@ impl PeerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::SocketAddr;
 
     #[test]
     fn discovered_device_moves_to_paired() {
@@ -222,5 +240,21 @@ mod tests {
         assert!(paired[0].receive_clipboard);
         assert!(paired[0].is_default_file_target);
         assert_eq!(paired[0].state, PeerConnectionState::Connected);
+    }
+
+    #[test]
+    fn discovered_endpoint_is_recorded_and_removed_with_pairing() {
+        let mut registry = PeerRegistry::new();
+        let device = DeviceInfo::new_local("MacBook", 45731);
+        let device_id = device.id.clone();
+        let endpoint: SocketAddr = "192.168.1.10:45731".parse().unwrap();
+
+        registry.mark_discovered_at(device, endpoint);
+
+        assert_eq!(registry.endpoint(&device_id), Some(endpoint));
+
+        registry.remove_pairing(&device_id);
+
+        assert_eq!(registry.endpoint(&device_id), None);
     }
 }

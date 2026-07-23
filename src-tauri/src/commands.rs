@@ -208,6 +208,7 @@ mod tests {
         LocalSettings {
             local_device: DeviceInfo::new_local("Windows Desk", 45731),
             paired_peers: peers,
+            ui_locale: "zh-CN".to_string(),
         }
     }
 

@@ -1,7 +1,7 @@
 use crate::domain::{DeviceId, DeviceInfo};
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -139,5 +139,10 @@ mod tests {
         assert!(json.get("fromDeviceId").is_none());
         assert!(json.get("protocolVersion").is_none());
         assert!(json.get("sessionId").is_none());
+    }
+
+    #[test]
+    fn business_protocol_starts_new_version() {
+        assert_eq!(PROTOCOL_VERSION, 2);
     }
 }

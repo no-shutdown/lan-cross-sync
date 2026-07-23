@@ -1,6 +1,7 @@
 use crate::{
     clipboard::ClipboardEvent,
     domain::{DeviceId, DeviceInfo, PeerConnectionState},
+    file_transfer::{FileAccept, FileCancel, FileChunk, FileComplete, FileOffer},
     protocol::PROTOCOL_VERSION,
     registry::PeerRegistry,
 };
@@ -74,6 +75,11 @@ pub enum TransportMessage {
         nonce: u64,
     },
     Clipboard(ClipboardEvent),
+    FileOffer(FileOffer),
+    FileAccept(FileAccept),
+    FileChunk(FileChunk),
+    FileComplete(FileComplete),
+    FileCancel(FileCancel),
 }
 
 pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, TransportError> {
@@ -428,6 +434,25 @@ impl TransportRuntime {
         self.connections.lock().unwrap().contains_key(peer_id)
     }
 
+    pub fn disconnect_peer(&self, peer_id: &DeviceId) {
+        let removed = self.connections.lock().unwrap().remove(peer_id);
+        if removed.is_none() {
+            return;
+        }
+
+        let peer = self.registry.lock().unwrap().device(peer_id);
+        self.registry
+            .lock()
+            .unwrap()
+            .set_state(peer_id, PeerConnectionState::Offline);
+        if let Some(peer) = peer {
+            let _ = self.events.send(TransportEvent::PeerDisconnected {
+                peer,
+                reason_code: "unpaired_peer".to_string(),
+            });
+        }
+    }
+
     fn mark_connecting(&self, peer_id: DeviceId) -> bool {
         self.connecting.lock().unwrap().insert(peer_id)
     }
@@ -534,7 +559,7 @@ impl TransportRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::DeviceInfo;
+    use crate::domain::{DeviceInfo, PairedPeer};
     use tokio::io::duplex;
 
     #[test]
@@ -629,5 +654,40 @@ mod tests {
 
         write_task.await.unwrap();
         assert_eq!(message, expected);
+    }
+
+    #[test]
+    fn disconnect_peer_removes_connection_and_marks_peer_offline() {
+        let local = DeviceInfo::new_local("Windows Desk", 45731);
+        let peer = DeviceInfo::new_local("MacBook", 45731);
+        let peer_id = peer.id.clone();
+        let registry = Arc::new(Mutex::new(PeerRegistry::from_paired(vec![PairedPeer {
+            device: peer.clone(),
+            receive_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Connected,
+        }])));
+        let (runtime, mut events) = TransportRuntime::new(local, registry.clone());
+        let (sender, _receiver) = mpsc::channel(1);
+        runtime.connections.lock().unwrap().insert(
+            peer_id.clone(),
+            ConnectionEntry {
+                token: "test-token".to_string(),
+                sender,
+            },
+        );
+
+        runtime.disconnect_peer(&peer_id);
+
+        assert!(!runtime.is_connected(&peer_id));
+        assert_eq!(
+            registry.lock().unwrap().paired()[0].state,
+            PeerConnectionState::Offline
+        );
+        assert!(matches!(
+            events.try_recv(),
+            Ok(TransportEvent::PeerDisconnected { reason_code, .. })
+                if reason_code == "unpaired_peer"
+        ));
     }
 }

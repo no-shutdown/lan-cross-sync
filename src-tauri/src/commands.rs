@@ -1,6 +1,7 @@
 use crate::{
     domain::{DeviceId, LocalSettings, PairedPeer},
     error::{AppError, AppResult},
+    file_transfer::FileTransferService,
     pairing::{PairingRuntime, PairingSession},
     protocol::{encode_message, LanMessage, PairingRequest, PROTOCOL_VERSION},
     registry::PeerRegistry,
@@ -8,7 +9,10 @@ use crate::{
     transport::TransportRuntime,
 };
 use serde::Serialize;
-use std::sync::{Arc, Mutex};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 use tauri::State;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_autostart::ManagerExt;
@@ -22,6 +26,7 @@ pub struct AppState {
     pub active_pairing: Arc<Mutex<Option<PairingSession>>>,
     pub pairing: Arc<PairingRuntime>,
     pub transport: Arc<TransportRuntime>,
+    pub transfers: Arc<FileTransferService>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -160,6 +165,58 @@ pub async fn request_pairing(
 }
 
 #[tauri::command]
+pub async fn start_file_transfer(
+    state: State<'_, AppState>,
+    device_id: DeviceId,
+    paths: Vec<String>,
+) -> AppResult<String> {
+    let paths = paths.into_iter().map(PathBuf::from).collect();
+    state
+        .transfers
+        .start_transfer(device_id, paths)
+        .await
+        .map_err(AppError::Anyhow)
+}
+
+#[tauri::command]
+pub async fn accept_file_transfer(
+    state: State<'_, AppState>,
+    transfer_id: String,
+    destination: String,
+) -> AppResult<()> {
+    state
+        .transfers
+        .accept_transfer(&transfer_id, PathBuf::from(destination))
+        .await
+        .map_err(AppError::Anyhow)
+}
+
+#[tauri::command]
+pub async fn cancel_file_transfer(
+    state: State<'_, AppState>,
+    transfer_id: String,
+) -> AppResult<()> {
+    state
+        .transfers
+        .cancel_transfer(&transfer_id)
+        .await
+        .map_err(AppError::Anyhow)
+}
+
+#[tauri::command]
+pub fn set_ui_locale(state: State<'_, AppState>, locale: String) -> AppResult<LocalSettings> {
+    if !matches!(locale.as_str(), "zh-CN" | "en-US") {
+        return Err(AppError::Message("invalid_locale".to_string()));
+    }
+    let mut settings = state.settings.lock().unwrap();
+    let mut next = settings.clone();
+    next.ui_locale = locale;
+    state.settings_store.save(&next)?;
+    *settings = next.clone();
+    Ok(next)
+}
+
+#[tauri::command]
 pub fn set_receive_clipboard(
     state: State<'_, AppState>,
     device_id: DeviceId,
@@ -200,6 +257,7 @@ pub fn clear_pairing(state: State<'_, AppState>, device_id: DeviceId) -> AppResu
     let next = without_pairing(settings.clone(), device_id.clone())?;
     state.settings_store.save(&next)?;
     *settings = next.clone();
+    state.transport.disconnect_peer(&device_id);
     state.registry.lock().unwrap().remove_pairing(&device_id);
     Ok(next)
 }

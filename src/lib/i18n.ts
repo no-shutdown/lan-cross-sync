@@ -1,0 +1,139 @@
+import type { Locale } from './types'
+
+const messages = {
+  'zh-CN': {
+    appName: '局域网跨设备同步',
+    refresh: '刷新',
+    pairing: '设备配对',
+    startPairing: '生成配对码',
+    cancel: '取消',
+    noActivePairing: '当前没有有效配对码',
+    pairingCodeHint: '在另一台设备输入此配对码',
+    pairedDevices: '已配对设备',
+    noPairedDevices: '还没有已配对设备',
+    discoveredDevices: '发现的设备',
+    noDiscoveredDevices: '暂未发现其他设备',
+    availableToPair: '可进行配对',
+    pairingCode: '配对码',
+    pair: '配对',
+    pairingPending: '发送中',
+    receiveClipboard: '接收剪贴板内容',
+    defaultTarget: '默认文件目标',
+    setFileTarget: '设为文件目标',
+    clearPairing: '解除配对',
+    startup: '启动设置',
+    autostart: '系统启动时运行',
+    transfers: '文件传输',
+    targetDevice: '目标设备',
+    chooseTarget: '选择目标设备',
+    selectFiles: '选择文件或文件夹',
+    dropTitle: '将文件或文件夹拖到这里',
+    dropHint: '先选择已配对的目标设备',
+    noTransferTarget: '请先选择在线的已配对设备',
+    transferIdle: '暂无传输任务',
+    incomingOffer: '收到文件传输请求',
+    accept: '选择保存位置',
+    reject: '拒绝',
+    sending: '发送中',
+    receiving: '接收中',
+    completed: '已完成',
+    cancelled: '已取消',
+    failed: '失败',
+    language: '界面语言',
+    localDevice: '本机',
+    online: '在线',
+    offline: '离线',
+    discovered: '已发现',
+    pairingState: '配对中',
+    errorLoadDashboard: '无法加载应用状态',
+    errorPairing: '配对失败，请检查配对码和设备状态',
+    errorTransfer: '文件传输失败',
+    imageTooLarge: '图片超过剪贴板同步大小限制，请改用文件传输',
+    errorInvalidPairingCode: '配对码必须是 6 位数字',
+    errorDeviceNotFound: '找不到目标设备',
+    errorDeviceEndpointUnavailable: '目标设备暂不可连接',
+    errorNoActivePairing: '对方没有正在等待的配对码',
+    errorInvalidCode: '配对码不正确',
+    errorExpiredCode: '配对码已过期',
+    errorUnpairedPeer: '设备尚未完成配对',
+  },
+  'en-US': {
+    appName: 'LAN Cross Sync',
+    refresh: 'Refresh',
+    pairing: 'Pair device',
+    startPairing: 'Generate code',
+    cancel: 'Cancel',
+    noActivePairing: 'No active pairing code',
+    pairingCodeHint: 'Enter this code on the other device',
+    pairedDevices: 'Paired devices',
+    noPairedDevices: 'No paired devices yet',
+    discoveredDevices: 'Discovered devices',
+    noDiscoveredDevices: 'No other devices discovered',
+    availableToPair: 'Available to pair',
+    pairingCode: 'Pairing code',
+    pair: 'Pair',
+    pairingPending: 'Sending',
+    receiveClipboard: 'Receive clipboard content',
+    defaultTarget: 'Default file target',
+    setFileTarget: 'Set file target',
+    clearPairing: 'Remove pairing',
+    startup: 'Startup',
+    autostart: 'Run when the system starts',
+    transfers: 'File transfers',
+    targetDevice: 'Target device',
+    chooseTarget: 'Choose a target device',
+    selectFiles: 'Select files or folders',
+    dropTitle: 'Drop files or folders here',
+    dropHint: 'Choose a paired target device first',
+    noTransferTarget: 'Select an online paired device first',
+    transferIdle: 'No transfer tasks',
+    incomingOffer: 'Incoming file transfer request',
+    accept: 'Choose save location',
+    reject: 'Reject',
+    sending: 'Sending',
+    receiving: 'Receiving',
+    completed: 'Completed',
+    cancelled: 'Cancelled',
+    failed: 'Failed',
+    language: 'Language',
+    localDevice: 'This device',
+    online: 'Online',
+    offline: 'Offline',
+    discovered: 'Discovered',
+    pairingState: 'Pairing',
+    errorLoadDashboard: 'Unable to load application state',
+    errorPairing: 'Pairing failed. Check the code and device status.',
+    errorTransfer: 'File transfer failed',
+    imageTooLarge: 'This image is too large for clipboard sync. Send it as a file instead.',
+    errorInvalidPairingCode: 'The pairing code must contain 6 digits',
+    errorDeviceNotFound: 'Target device was not found',
+    errorDeviceEndpointUnavailable: 'Target device is not reachable yet',
+    errorNoActivePairing: 'The other device has no active pairing code',
+    errorInvalidCode: 'The pairing code is incorrect',
+    errorExpiredCode: 'The pairing code has expired',
+    errorUnpairedPeer: 'The device has not completed pairing',
+  },
+} as const
+
+export type MessageKey = keyof typeof messages['zh-CN']
+
+export function normalizeLocale(locale: string | undefined): Locale {
+  return locale === 'en-US' ? 'en-US' : 'zh-CN'
+}
+
+export function t(locale: Locale, key: MessageKey): string {
+  return messages[locale][key] ?? messages['en-US'][key]
+}
+
+export function errorText(locale: Locale, error: unknown): string {
+  const raw =
+    typeof error === 'string'
+      ? error
+      : error && typeof error === 'object' && 'message' in error
+        ? String((error as { message?: unknown }).message)
+        : ''
+  const normalized = raw.replace(/[ .]/g, '_') as MessageKey
+  const key = `error${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}` as MessageKey
+  if (key in messages[locale]) return t(locale, key)
+  return raw || t(locale, 'errorTransfer')
+}

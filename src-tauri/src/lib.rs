@@ -3,6 +3,7 @@ mod commands;
 mod discovery;
 mod domain;
 mod error;
+mod file_transfer;
 mod pairing;
 mod protocol;
 mod registry;
@@ -11,9 +12,12 @@ mod transport;
 
 use clipboard::ClipboardService;
 use commands::{
-    cancel_pairing, clear_pairing, get_autostart_enabled, get_dashboard_state, request_pairing,
-    set_autostart_enabled, set_default_file_target, set_receive_clipboard, start_pairing, AppState,
+    accept_file_transfer, cancel_file_transfer, cancel_pairing, clear_pairing,
+    get_autostart_enabled, get_dashboard_state, request_pairing, set_autostart_enabled,
+    set_default_file_target, set_receive_clipboard, set_ui_locale, start_file_transfer,
+    start_pairing, AppState,
 };
+use file_transfer::FileTransferService;
 use pairing::PairingRuntime;
 use registry::PeerRegistry;
 use settings::SettingsStore;
@@ -21,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent,
+    Emitter, Manager, WindowEvent,
 };
 use transport::{TransportEvent, TransportMessage, TransportRuntime};
 
@@ -38,6 +42,7 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_config = app
                 .path()
@@ -61,6 +66,9 @@ pub fn run() {
                 settings.clone(),
                 transport.clone(),
             );
+            let (file_transfer_runtime, mut transfer_events) =
+                FileTransferService::new(transport.clone());
+            let transfers = Arc::new(file_transfer_runtime);
             let pairing = Arc::new(PairingRuntime::new(
                 discovery_device.clone(),
                 settings.clone(),
@@ -76,6 +84,7 @@ pub fn run() {
                 active_pairing: active_pairing.clone(),
                 pairing: pairing.clone(),
                 transport: transport.clone(),
+                transfers: transfers.clone(),
             });
 
             tauri::async_runtime::spawn(async move {
@@ -114,6 +123,7 @@ pub fn run() {
             });
 
             let clipboard_events = clipboard.clone();
+            let file_events = transfers.clone();
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = transport_events.recv().await {
                     match event {
@@ -123,15 +133,34 @@ pub fn run() {
                         TransportEvent::PeerDisconnected { peer, reason_code } => {
                             tracing::debug!(device_id = ?peer.id, %reason_code, "peer transport disconnected");
                         }
-                        TransportEvent::Message { peer, message } => {
-                            if let TransportMessage::Clipboard(clipboard_event) = message {
+                        TransportEvent::Message { peer, message } => match message {
+                            TransportMessage::Clipboard(clipboard_event) => {
                                 if let Err(err) =
                                     clipboard_events.handle_remote(&peer.id, clipboard_event)
                                 {
                                     tracing::debug!(?err, device_id = ?peer.id, "clipboard event was rejected");
                                 }
                             }
-                        }
+                            message @ (TransportMessage::FileOffer(_)
+                            | TransportMessage::FileAccept(_)
+                            | TransportMessage::FileChunk(_)
+                            | TransportMessage::FileComplete(_)
+                            | TransportMessage::FileCancel(_)) => {
+                                if let Err(err) = file_events.handle_message(&peer, message).await {
+                                    tracing::debug!(?err, device_id = ?peer.id, "file transfer message was rejected");
+                                }
+                            }
+                            _ => {}
+                        },
+                    }
+                }
+            });
+
+            let transfer_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                while let Some(event) = transfer_events.recv().await {
+                    if let Err(err) = transfer_app.emit("transfer-event", &event) {
+                        tracing::debug!(?err, "failed to emit transfer event");
                     }
                 }
             });
@@ -165,6 +194,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_dashboard_state,
+            start_file_transfer,
+            accept_file_transfer,
+            cancel_file_transfer,
             get_autostart_enabled,
             set_autostart_enabled,
             start_pairing,
@@ -172,6 +204,7 @@ pub fn run() {
             request_pairing,
             set_receive_clipboard,
             set_default_file_target,
+            set_ui_locale,
             clear_pairing
         ])
         .run(tauri::generate_context!())

@@ -1,7 +1,8 @@
 use crate::{
     domain::{DeviceId, LocalSettings, PairedPeer},
     error::{AppError, AppResult},
-    pairing::PairingSession,
+    pairing::{PairingRuntime, PairingSession},
+    protocol::{encode_message, LanMessage, PairingRequest, PROTOCOL_VERSION},
     registry::PeerRegistry,
     settings::SettingsStore,
 };
@@ -10,12 +11,15 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_autostart::ManagerExt;
+use tokio::net::UdpSocket;
+use uuid::Uuid;
 
 pub struct AppState {
     pub settings_store: SettingsStore,
     pub settings: Arc<Mutex<LocalSettings>>,
     pub registry: Arc<Mutex<PeerRegistry>>,
     pub active_pairing: Arc<Mutex<Option<PairingSession>>>,
+    pub pairing: Arc<PairingRuntime>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -24,6 +28,7 @@ pub struct DashboardState {
     pub discovered_devices: Vec<crate::domain::DeviceInfo>,
     pub paired_devices: Vec<PairedPeer>,
     pub active_pairing_code: Option<String>,
+    pub pairing_error_code: Option<String>,
 }
 
 #[tauri::command]
@@ -34,12 +39,14 @@ pub fn get_dashboard_state(state: State<'_, AppState>) -> AppResult<DashboardSta
     let active_pairing_code = active_pairing_code(&mut active_pairing);
     let paired_devices = registry.paired();
     settings.paired_peers = paired_devices.clone();
+    let pairing_error_code = state.pairing.last_error.lock().unwrap().clone();
 
     Ok(DashboardState {
         settings,
         paired_devices,
         discovered_devices: registry.discovered(),
         active_pairing_code,
+        pairing_error_code,
     })
 }
 
@@ -89,6 +96,7 @@ pub fn start_pairing(state: State<'_, AppState>) -> AppResult<String> {
     let session = PairingSession::new(local_device);
     let code = session.code.clone();
     *state.active_pairing.lock().unwrap() = Some(session);
+    state.pairing.clear_error();
     Ok(code)
 }
 
@@ -96,6 +104,57 @@ pub fn start_pairing(state: State<'_, AppState>) -> AppResult<String> {
 pub fn cancel_pairing(state: State<'_, AppState>) -> AppResult<()> {
     *state.active_pairing.lock().unwrap() = None;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn request_pairing(
+    state: State<'_, AppState>,
+    device_id: DeviceId,
+    code: String,
+) -> AppResult<String> {
+    if code.len() != 6 || !code.chars().all(|character| character.is_ascii_digit()) {
+        return Err(AppError::Message("invalid_pairing_code".to_string()));
+    }
+
+    let (target, endpoint, local_device) = {
+        let registry = state.registry.lock().unwrap();
+        let target = registry
+            .device(&device_id)
+            .ok_or_else(|| AppError::Message("device_not_found".to_string()))?;
+        let endpoint = registry
+            .endpoint(&device_id)
+            .ok_or_else(|| AppError::Message("device_endpoint_unavailable".to_string()))?;
+        let local_device = state.settings.lock().unwrap().local_device.clone();
+        (target, endpoint, local_device)
+    };
+
+    let request_id = Uuid::new_v4().to_string();
+    state
+        .pairing
+        .requests
+        .lock()
+        .unwrap()
+        .register_outgoing(request_id.clone(), target.clone());
+    state.pairing.clear_error();
+
+    let message = LanMessage::PairingRequest(PairingRequest {
+        protocol_version: PROTOCOL_VERSION,
+        request_id: request_id.clone(),
+        target_device_id: target.id,
+        from_device: local_device,
+        code,
+    });
+    let payload =
+        encode_message(&message).map_err(|err| AppError::Anyhow(anyhow::Error::new(err)))?;
+    let socket = UdpSocket::bind(("0.0.0.0", 0))
+        .await
+        .map_err(|err| AppError::Anyhow(err.into()))?;
+    socket
+        .send_to(&payload, endpoint)
+        .await
+        .map_err(|err| AppError::Anyhow(err.into()))?;
+
+    Ok(request_id)
 }
 
 #[tauri::command]

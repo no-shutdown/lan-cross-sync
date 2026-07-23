@@ -81,6 +81,13 @@ impl PeerRegistry {
         self.endpoints.get(id).copied()
     }
 
+    pub fn device(&self, id: &DeviceId) -> Option<DeviceInfo> {
+        self.paired
+            .get(id)
+            .map(|peer| peer.device.clone())
+            .or_else(|| self.discovered.get(id).cloned())
+    }
+
     pub fn discovered(&self) -> Vec<DeviceInfo> {
         self.discovered.values().cloned().collect()
     }

@@ -8,9 +8,10 @@ mod registry;
 mod settings;
 
 use commands::{
-    cancel_pairing, clear_pairing, get_autostart_enabled, get_dashboard_state,
+    cancel_pairing, clear_pairing, get_autostart_enabled, get_dashboard_state, request_pairing,
     set_autostart_enabled, set_default_file_target, set_receive_clipboard, start_pairing, AppState,
 };
+use pairing::PairingRuntime;
 use registry::PeerRegistry;
 use settings::SettingsStore;
 use std::sync::{Arc, Mutex};
@@ -48,12 +49,20 @@ pub fn run() {
             let settings = Arc::new(Mutex::new(settings));
             let registry = Arc::new(Mutex::new(registry));
             let active_pairing = Arc::new(Mutex::new(None));
+            let pairing = Arc::new(PairingRuntime::new(
+                discovery_device.clone(),
+                settings.clone(),
+                settings_store.clone(),
+                registry.clone(),
+                active_pairing.clone(),
+            ));
 
             app.manage(AppState {
-                settings_store,
+                settings_store: settings_store.clone(),
                 settings: settings.clone(),
                 registry: registry.clone(),
-                active_pairing,
+                active_pairing: active_pairing.clone(),
+                pairing: pairing.clone(),
             });
 
             tauri::async_runtime::spawn(async move {
@@ -61,17 +70,10 @@ pub fn run() {
                     tracing::error!(?err, "LAN discovery announcer stopped");
                 }
             });
-            let receive_device_id = settings
-                .lock()
-                .expect("settings lock poisoned during startup")
-                .local_device
-                .id
-                .clone();
-            let receive_registry = registry.clone();
+            let receive_pairing = pairing.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(err) =
-                    discovery::receive_loop(receive_device_id, discovery_port, receive_registry)
-                        .await
+                    discovery::receive_loop_with_pairing(discovery_port, receive_pairing).await
                 {
                     tracing::error!(?err, "LAN discovery receiver stopped");
                 }
@@ -110,6 +112,7 @@ pub fn run() {
             set_autostart_enabled,
             start_pairing,
             cancel_pairing,
+            request_pairing,
             set_receive_clipboard,
             set_default_file_target,
             clear_pairing

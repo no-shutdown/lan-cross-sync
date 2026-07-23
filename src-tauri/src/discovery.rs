@@ -1,6 +1,10 @@
 use crate::{
     domain::{DeviceId, DeviceInfo},
-    protocol::{decode_message, encode_message, DiscoveryPacket, LanMessage, PROTOCOL_VERSION},
+    pairing::PairingRuntime,
+    protocol::{
+        decode_message, encode_message, DiscoveryPacket, LanMessage, PairingConfirm,
+        PairingRequest, PairingResponse, PROTOCOL_VERSION,
+    },
     registry::PeerRegistry,
 };
 use anyhow::{Context, Result};
@@ -134,6 +138,229 @@ pub async fn receive_loop(
     }
 }
 
+pub async fn receive_loop_with_pairing(port: u16, pairing: Arc<PairingRuntime>) -> Result<()> {
+    let socket = UdpSocket::bind(("0.0.0.0", port))
+        .await
+        .with_context(|| format!("failed to bind discovery UDP listener on port {port}"))?;
+    let mut buffer = vec![0_u8; 64 * 1024];
+
+    loop {
+        let (len, source) = socket
+            .recv_from(&mut buffer)
+            .await
+            .context("failed to receive LAN message")?;
+        if let Err(err) = handle_lan_message(&socket, &buffer[..len], source, &pairing).await {
+            tracing::debug!(?err, %source, "ignored invalid LAN message");
+        }
+    }
+}
+
+async fn handle_lan_message(
+    socket: &UdpSocket,
+    bytes: &[u8],
+    source: SocketAddr,
+    pairing: &PairingRuntime,
+) -> Result<()> {
+    let message = decode_message(bytes).context("failed to decode LAN message")?;
+    match message {
+        LanMessage::Discovery(packet)
+            if packet.protocol_version == PROTOCOL_VERSION
+                && packet.device.protocol_version == PROTOCOL_VERSION =>
+        {
+            let mut registry = pairing.registry.lock().unwrap();
+            if packet.device.id != pairing.local_device.id {
+                registry.mark_discovered_at(packet.device, source);
+            }
+        }
+        LanMessage::Discovery(_) => {}
+        LanMessage::PairingRequest(request) => {
+            handle_pairing_request(socket, request, source, pairing).await?;
+        }
+        LanMessage::PairingResponse(response) => {
+            handle_pairing_response(socket, response, source, pairing).await?;
+        }
+        LanMessage::PairingConfirm(confirm) => {
+            handle_pairing_confirm(confirm, source, pairing)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_pairing_request(
+    socket: &UdpSocket,
+    request: PairingRequest,
+    source: SocketAddr,
+    pairing: &PairingRuntime,
+) -> Result<()> {
+    if request.target_device_id != pairing.local_device.id {
+        return Ok(());
+    }
+
+    let response = if request.from_device.id == pairing.local_device.id {
+        PairingResponse::rejected(
+            request.request_id,
+            String::new(),
+            pairing.local_device.clone(),
+            "self_device",
+        )
+    } else if request.protocol_version != PROTOCOL_VERSION
+        || request.from_device.protocol_version != PROTOCOL_VERSION
+    {
+        PairingResponse::rejected(
+            request.request_id,
+            String::new(),
+            pairing.local_device.clone(),
+            "unsupported_protocol",
+        )
+    } else {
+        let mut active = pairing.active.lock().unwrap();
+        let session_state = active.as_ref().map(|session| {
+            (
+                session.session_id.clone(),
+                session.is_expired(),
+                session.verify_code(&request.code),
+            )
+        });
+
+        match session_state {
+            None => {
+                pairing.record_error("no_active_pairing");
+                PairingResponse::rejected(
+                    request.request_id,
+                    String::new(),
+                    pairing.local_device.clone(),
+                    "no_active_pairing",
+                )
+            }
+            Some((session_id, expired, _)) if expired => {
+                *active = None;
+                PairingResponse::rejected(
+                    request.request_id,
+                    session_id,
+                    pairing.local_device.clone(),
+                    "expired_code",
+                )
+            }
+            Some((session_id, _, false)) => PairingResponse::rejected(
+                request.request_id,
+                session_id,
+                pairing.local_device.clone(),
+                "invalid_code",
+            ),
+            Some((session_id, _, true)) => {
+                pairing.requests.lock().unwrap().register_incoming(
+                    request.request_id.clone(),
+                    session_id.clone(),
+                    request.from_device.clone(),
+                );
+                PairingResponse::accepted(
+                    request.request_id,
+                    session_id,
+                    pairing.local_device.clone(),
+                )
+            }
+        }
+    };
+
+    send_pairing_response(socket, response, source).await
+}
+
+async fn send_pairing_response(
+    socket: &UdpSocket,
+    response: PairingResponse,
+    target: SocketAddr,
+) -> Result<()> {
+    let bytes = encode_message(&LanMessage::PairingResponse(response))
+        .context("failed to encode pairing response")?;
+    socket
+        .send_to(&bytes, target)
+        .await
+        .with_context(|| format!("failed to send pairing response to {target}"))?;
+    Ok(())
+}
+
+async fn handle_pairing_response(
+    socket: &UdpSocket,
+    response: PairingResponse,
+    source: SocketAddr,
+    pairing: &PairingRuntime,
+) -> Result<()> {
+    let Some(pending) = pairing
+        .requests
+        .lock()
+        .unwrap()
+        .take_outgoing(&response.request_id)
+    else {
+        return Ok(());
+    };
+
+    if !response.accepted {
+        pairing.record_error(
+            response
+                .reason_code
+                .unwrap_or_else(|| "pairing_rejected".to_string()),
+        );
+        return Ok(());
+    }
+
+    if response.from_device.id != pending.peer.id
+        || response.session_id.is_empty()
+        || response.from_device.id == pairing.local_device.id
+    {
+        pairing.record_error("invalid_pairing_response");
+        return Ok(());
+    }
+
+    pairing.persist_peer(response.from_device.clone(), source)?;
+    let confirm = PairingConfirm {
+        protocol_version: PROTOCOL_VERSION,
+        request_id: response.request_id,
+        session_id: response.session_id,
+        target_device_id: response.from_device.id,
+        from_device_id: pairing.local_device.id.clone(),
+    };
+    let bytes = encode_message(&LanMessage::PairingConfirm(confirm))
+        .context("failed to encode pairing confirmation")?;
+    socket
+        .send_to(&bytes, source)
+        .await
+        .with_context(|| format!("failed to send pairing confirmation to {source}"))?;
+    pairing.clear_error();
+    Ok(())
+}
+
+fn handle_pairing_confirm(
+    confirm: PairingConfirm,
+    source: SocketAddr,
+    pairing: &PairingRuntime,
+) -> Result<()> {
+    if confirm.target_device_id != pairing.local_device.id
+        || confirm.from_device_id == pairing.local_device.id
+    {
+        return Ok(());
+    }
+
+    let Some(pending) = pairing
+        .requests
+        .lock()
+        .unwrap()
+        .take_incoming(&confirm.request_id)
+    else {
+        return Ok(());
+    };
+
+    if pending.session_id != confirm.session_id || pending.peer.id != confirm.from_device_id {
+        pairing.record_error("invalid_pairing_confirmation");
+        return Ok(());
+    }
+
+    pairing.persist_peer(pending.peer, source)?;
+    *pairing.active.lock().unwrap() = None;
+    pairing.clear_error();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,8 +412,10 @@ mod tests {
         let device = DeviceInfo::new_local("Windows Desk", 45731);
         let message = LanMessage::PairingRequest(crate::protocol::PairingRequest {
             protocol_version: PROTOCOL_VERSION,
-            session_id: "session".to_string(),
+            request_id: "request".to_string(),
+            target_device_id: device.id.clone(),
             from_device: device,
+            code: "123456".to_string(),
         });
         let encoded = encode_message(&message).unwrap();
         let decoded = decode_discovery(&encoded).unwrap();

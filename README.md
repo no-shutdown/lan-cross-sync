@@ -1,70 +1,51 @@
 # LAN Cross Sync
 
-LAN Cross Sync is a Tauri desktop app foundation for syncing clipboard content and files between a Mac and a Windows PC on the same LAN.
+LAN Cross Sync 是一个基于 Tauri v2、React、TypeScript 和 Rust 的桌面应用，用于在同一局域网内的 Windows 和 macOS 设备之间同步剪贴板内容和传输文件。
 
-## Current Scope
+当前版本是可运行的 MVP：已实现设备发现、6 位配对、配对设备授权连接、文本/图片剪贴板同步、文件和目录传输、断线重连、临时文件清理、系统托盘、开机启动，以及简体中文/英文界面切换。
 
-Implemented:
+项目定位是可信局域网内使用。目前未实现端到端加密、断点续传、带宽限制、剪贴板历史、互联网中继和 NAT 穿透。
 
-- Versioned LAN discovery and peer endpoint tracking.
-- Six-digit pairing handshake with paired-peer authorization.
-- Framed TCP transport with reconnect and heartbeat handling.
-- Text and image clipboard synchronization with loop prevention and size limits.
-- File and folder transfer with safe paths, progress events, cancellation, and atomic finalization.
-- Simplified Chinese and English UI switching.
-- Desktop autostart, tray behavior, drag-and-drop, and native file dialogs.
-- Windows NSIS and MSI packaging.
+## 快速开始
 
-Deferred by the approved MVP scope:
-
-- End-to-end encryption, resumable transfers, bandwidth limits, and clipboard history.
-
-## Handoff
-
-The recommended implementation order and acceptance criteria are documented in
-[`docs/DEVELOPMENT_ROADMAP.md`](docs/DEVELOPMENT_ROADMAP.md). Start from the
-latest commit and keep each iteration independently buildable and testable.
-
-## Development
-
-Install dependencies:
+安装依赖：
 
 ```powershell
-pnpm install
+pnpm install --frozen-lockfile
 ```
 
-Run the app in development:
+启动开发调试：
 
 ```powershell
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 pnpm tauri dev
 ```
 
-If `pnpm tauri dev` cannot find `cargo`, prefix the current shell PATH:
+如果当前终端已经可以执行 `cargo --version`，可以省略 `$env:Path` 设置。完整的环境准备、双机验收、故障排查和打包流程见：
+
+- [`docs/PROJECT_GUIDE.md`](docs/PROJECT_GUIDE.md)：当前功能、架构、限制和数据边界。
+- [`docs/BUILD_AND_TEST.md`](docs/BUILD_AND_TEST.md)：开发运行、自动化验证、Windows 安装包和 macOS DMG。
+- [`docs/superpowers/`](docs/superpowers/)：历史设计与实施记录，不代表当前待办清单。
+
+## 常用验证命令
 
 ```powershell
-$env:PATH = "$env:USERPROFILE\.cargo\bin;" + $env:PATH
-pnpm tauri dev
-```
-
-## Verification
-
-```powershell
-cargo test --manifest-path src-tauri\Cargo.toml
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" fmt --all -- --check
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" check --manifest-path src-tauri\Cargo.toml
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test --manifest-path src-tauri\Cargo.toml
 pnpm build
 ```
 
-Package the Windows application:
+## Windows 打包
 
 ```powershell
-pnpm tauri build
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+pnpm tauri build --no-sign
 ```
 
-The generated installers are under `src-tauri\target\release\bundle\nsis\` and
-`src-tauri\target\release\bundle\msi\`. See
-[`docs/BUILD_AND_TEST.md`](docs/BUILD_AND_TEST.md) for two-device acceptance steps
-and troubleshooting.
+NSIS、MSI 和裸 Release 可执行文件会生成在 `src-tauri\target\release\` 下。普通用户优先使用 `bundle\nsis\*-setup.exe`；MSI 更适合企业部署。macOS 安装包必须在 macOS 或 macOS CI 上构建，Windows 不能直接生成 DMG。
 
-The app writes local settings under the Tauri app config directory. On Windows this is typically:
+Windows 本地设置通常位于：
 
 ```text
 %APPDATA%\com.local.lancrosssync\settings.json

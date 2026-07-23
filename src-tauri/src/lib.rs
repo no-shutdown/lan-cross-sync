@@ -68,8 +68,14 @@ pub fn run() {
                 settings.clone(),
                 transport.clone(),
             );
+            let transfer_index_path = app
+                .path()
+                .app_cache_dir()
+                .expect("failed to resolve application cache directory")
+                .join("active-transfers.json");
             let (file_transfer_runtime, mut transfer_events) =
-                FileTransferService::new(transport.clone());
+                FileTransferService::new(transport.clone(), transfer_index_path)
+                    .expect("failed to initialize file transfer staging");
             let transfers = Arc::new(file_transfer_runtime);
             let pairing = Arc::new(PairingRuntime::new(
                 discovery_device.clone(),
@@ -133,6 +139,7 @@ pub fn run() {
                             tracing::debug!(device_id = ?peer.id, "peer transport connected");
                         }
                         TransportEvent::PeerDisconnected { peer, reason_code } => {
+                            file_events.handle_peer_disconnected(&peer.id);
                             tracing::debug!(device_id = ?peer.id, %reason_code, "peer transport disconnected");
                         }
                         TransportEvent::Message { peer, message } => match message {

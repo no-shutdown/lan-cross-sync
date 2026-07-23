@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 pub const FILE_CHUNK_BYTES: usize = 64 * 1024;
 pub const MAX_MANIFEST_ENTRIES: usize = 10_000;
+pub const STAGING_DIRECTORY_NAME: &str = ".lan-cross-sync-staging";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FileOffer {
@@ -492,9 +493,16 @@ struct IncomingTransfer {
     peer_id: DeviceId,
     manifest: TransferManifest,
     destination: Option<PathBuf>,
+    staging_dir: Option<PathBuf>,
     received_files: HashMap<String, u64>,
     received_bytes: u64,
     state: TransferStateMachine,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct StagingRecord {
+    transfer_id: String,
+    staging_dir: PathBuf,
 }
 
 #[derive(Clone)]
@@ -503,22 +511,30 @@ pub struct FileTransferService {
     outgoing: Arc<Mutex<HashMap<String, OutgoingTransfer>>>,
     incoming: Arc<Mutex<HashMap<String, IncomingTransfer>>>,
     cancelled: Arc<Mutex<HashSet<String>>>,
+    staging_records: Arc<Mutex<HashMap<String, PathBuf>>>,
+    staging_index_path: PathBuf,
     events: mpsc::UnboundedSender<TransferEvent>,
 }
 
 impl FileTransferService {
-    pub fn new(transport: Arc<TransportRuntime>) -> (Self, mpsc::UnboundedReceiver<TransferEvent>) {
+    pub fn new(
+        transport: Arc<TransportRuntime>,
+        staging_index_path: PathBuf,
+    ) -> anyhow::Result<(Self, mpsc::UnboundedReceiver<TransferEvent>)> {
+        initialize_staging_index(&staging_index_path)?;
         let (events, receiver) = mpsc::unbounded_channel();
-        (
+        Ok((
             Self {
                 transport,
                 outgoing: Arc::new(Mutex::new(HashMap::new())),
                 incoming: Arc::new(Mutex::new(HashMap::new())),
                 cancelled: Arc::new(Mutex::new(HashSet::new())),
+                staging_records: Arc::new(Mutex::new(HashMap::new())),
+                staging_index_path,
                 events,
             },
             receiver,
-        )
+        ))
     }
 
     pub async fn start_transfer(
@@ -582,13 +598,20 @@ impl FileTransferService {
             (transfer.peer_id.clone(), transfer.manifest.clone())
         };
 
-        prepare_destination(&destination, &manifest)?;
-        {
+        let staging_dir = staging_directory_for(&destination);
+        self.register_staging(transfer_id, staging_dir.clone())?;
+        if let Err(err) = prepare_staging_destination(&destination, &staging_dir, &manifest) {
+            let _ = self.cleanup_staging_path(transfer_id, &staging_dir);
+            return Err(err);
+        }
+        let staging_for_cleanup = staging_dir.clone();
+        let setup_result = (|| -> anyhow::Result<()> {
             let mut incoming = self.incoming.lock().unwrap();
             let transfer = incoming
                 .get_mut(transfer_id)
                 .ok_or_else(|| anyhow::anyhow!("transfer not found"))?;
             transfer.destination = Some(destination);
+            transfer.staging_dir = Some(staging_dir);
             transfer.received_files = manifest
                 .entries
                 .iter()
@@ -596,8 +619,14 @@ impl FileTransferService {
                 .map(|entry| (entry.relative_path.clone(), 0))
                 .collect();
             transfer.state.start()?;
+            Ok(())
+        })();
+        if let Err(err) = setup_result {
+            let _ = self.cleanup_staging_path(transfer_id, &staging_for_cleanup);
+            return Err(err);
         }
-        self.transport
+        if let Err(err) = self
+            .transport
             .send_message(
                 &peer_id,
                 TransportMessage::FileAccept(FileAccept {
@@ -606,7 +635,15 @@ impl FileTransferService {
                     reason_code: None,
                 }),
             )
-            .await?;
+            .await
+        {
+            if let Some(transfer) = self.incoming.lock().unwrap().remove(transfer_id) {
+                self.cleanup_incoming(&transfer)?;
+            } else {
+                self.unregister_staging(transfer_id)?;
+            }
+            return Err(err.into());
+        }
         self.emit(TransferEvent::Progress {
             transfer_id: transfer_id.to_string(),
             peer_id,
@@ -639,7 +676,7 @@ impl FileTransferService {
         if peer_id.1 == TransferDirection::Receiving {
             if let Some(mut transfer) = self.incoming.lock().unwrap().remove(transfer_id) {
                 let _ = transfer.state.cancel();
-                cleanup_incoming(&transfer);
+                self.cleanup_incoming(&transfer)?;
             }
         }
         self.transport
@@ -687,6 +724,7 @@ impl FileTransferService {
                 peer_id: peer.id.clone(),
                 manifest: manifest.clone(),
                 destination: None,
+                staging_dir: None,
                 received_files: HashMap::new(),
                 received_bytes: 0,
                 state,
@@ -830,7 +868,7 @@ impl FileTransferService {
     }
 
     fn handle_chunk(&self, peer: &DeviceInfo, chunk: FileChunk) -> anyhow::Result<()> {
-        let (destination, expected_offset, expected_size, manifest) = {
+        let (staging_dir, expected_offset, expected_size, manifest) = {
             let incoming = self.incoming.lock().unwrap();
             let transfer = incoming
                 .get(&chunk.transfer_id)
@@ -838,8 +876,8 @@ impl FileTransferService {
             if transfer.peer_id != peer.id {
                 anyhow::bail!("transfer peer mismatch")
             }
-            let destination = transfer
-                .destination
+            let staging_dir = transfer
+                .staging_dir
                 .clone()
                 .ok_or_else(|| anyhow::anyhow!("receiver has not accepted transfer"))?;
             let entry = transfer
@@ -852,7 +890,7 @@ impl FileTransferService {
                 anyhow::bail!("manifest entry is not a file")
             }
             (
-                destination,
+                staging_dir,
                 transfer
                     .received_files
                     .get(&chunk.relative_path)
@@ -869,8 +907,8 @@ impl FileTransferService {
             anyhow::bail!("invalid file chunk")
         }
 
-        let destination_path = safe_destination_path(&destination, &chunk.relative_path)?;
-        let part_path = part_destination_path(&destination_path);
+        let staging_path = safe_destination_path(&staging_dir, &chunk.relative_path)?;
+        let part_path = part_destination_path(&staging_path);
         if let Some(parent) = part_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -884,10 +922,10 @@ impl FileTransferService {
         file.flush()?;
         let received = expected_offset + chunk.data.len() as u64;
         if received == expected_size {
-            if destination_path.exists() {
-                anyhow::bail!("destination file already exists")
+            if staging_path.exists() {
+                anyhow::bail!("staged file already exists")
             }
-            fs::rename(&part_path, &destination_path)?;
+            fs::rename(&part_path, &staging_path)?;
         }
 
         let mut incoming = self.incoming.lock().unwrap();
@@ -913,16 +951,20 @@ impl FileTransferService {
     fn handle_complete(&self, peer: &DeviceInfo, complete: FileComplete) -> anyhow::Result<()> {
         let mut transfer = {
             let mut incoming = self.incoming.lock().unwrap();
-            let transfer = incoming
-                .remove(&complete.transfer_id)
-                .ok_or_else(|| anyhow::anyhow!("transfer not found"))?;
-            if transfer.peer_id != peer.id {
+            let peer_matches = incoming
+                .get(&complete.transfer_id)
+                .ok_or_else(|| anyhow::anyhow!("transfer not found"))?
+                .peer_id
+                == peer.id;
+            if !peer_matches {
                 anyhow::bail!("transfer peer mismatch")
             }
-            transfer
+            incoming
+                .remove(&complete.transfer_id)
+                .ok_or_else(|| anyhow::anyhow!("transfer not found"))?
         };
         if !complete.success {
-            cleanup_incoming(&transfer);
+            self.cleanup_incoming(&transfer)?;
             self.emit(TransferEvent::Failed {
                 transfer_id: complete.transfer_id,
                 peer_id: peer.id.clone(),
@@ -933,7 +975,7 @@ impl FileTransferService {
             });
             return Ok(());
         }
-        let complete = transfer
+        let manifest_complete = transfer
             .manifest
             .entries
             .iter()
@@ -944,8 +986,8 @@ impl FileTransferService {
                     .get(&entry.relative_path)
                     .is_some_and(|received| *received == entry.size)
             });
-        if !complete {
-            cleanup_incoming(&transfer);
+        if !manifest_complete {
+            self.cleanup_incoming(&transfer)?;
             self.emit(TransferEvent::Failed {
                 transfer_id: transfer.transfer_id,
                 peer_id: peer.id.clone(),
@@ -954,7 +996,30 @@ impl FileTransferService {
             });
             return Ok(());
         }
+
+        let Some(destination) = transfer.destination.clone() else {
+            self.cleanup_incoming(&transfer)?;
+            anyhow::bail!("receiver destination is missing")
+        };
+        let Some(staging_dir) = transfer.staging_dir.clone() else {
+            self.cleanup_incoming(&transfer)?;
+            anyhow::bail!("receiver staging directory is missing")
+        };
+        if let Err(err) =
+            finalize_staging_destination(&destination, &staging_dir, &transfer.manifest)
+        {
+            let reason_code = format_error_code(&err);
+            let _ = self.cleanup_incoming(&transfer);
+            self.emit(TransferEvent::Failed {
+                transfer_id: transfer.transfer_id,
+                peer_id: peer.id.clone(),
+                direction: TransferDirection::Receiving,
+                reason_code,
+            });
+            return Ok(());
+        }
         transfer.state.complete()?;
+        self.cleanup_incoming(&transfer)?;
         self.emit(TransferEvent::Completed {
             transfer_id: transfer.transfer_id,
             peer_id: peer.id.clone(),
@@ -964,11 +1029,7 @@ impl FileTransferService {
     }
 
     fn handle_cancel(&self, peer: &DeviceInfo, cancel: FileCancel) -> anyhow::Result<()> {
-        self.cancelled
-            .lock()
-            .unwrap()
-            .insert(cancel.transfer_id.clone());
-        let transfer = {
+        let incoming_transfer = {
             let mut incoming = self.incoming.lock().unwrap();
             match incoming.get(&cancel.transfer_id) {
                 Some(transfer) if transfer.peer_id != peer.id => {
@@ -978,14 +1039,141 @@ impl FileTransferService {
                 None => None,
             }
         };
-        if let Some(mut transfer) = transfer {
+        if let Some(mut transfer) = incoming_transfer {
             let _ = transfer.state.cancel();
-            cleanup_incoming(&transfer);
+            self.cleanup_incoming(&transfer)?;
             self.emit(TransferEvent::Cancelled {
                 transfer_id: cancel.transfer_id,
                 peer_id: peer.id.clone(),
                 direction: TransferDirection::Receiving,
             });
+            return Ok(());
+        }
+
+        let outgoing_offer = {
+            let mut outgoing = self.outgoing.lock().unwrap();
+            match outgoing.get(&cancel.transfer_id) {
+                Some(transfer) if transfer.peer_id != peer.id => {
+                    anyhow::bail!("transfer peer mismatch")
+                }
+                Some(transfer) if transfer.state.state == TransferState::Offered => {
+                    outgoing.remove(&cancel.transfer_id)
+                }
+                Some(_) => None,
+                None => None,
+            }
+        };
+        self.cancelled
+            .lock()
+            .unwrap()
+            .insert(cancel.transfer_id.clone());
+        if let Some(transfer) = outgoing_offer {
+            self.cancelled.lock().unwrap().remove(&cancel.transfer_id);
+            self.emit(TransferEvent::Cancelled {
+                transfer_id: cancel.transfer_id,
+                peer_id: transfer.peer_id,
+                direction: TransferDirection::Sending,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn handle_peer_disconnected(&self, peer_id: &DeviceId) {
+        let incoming = {
+            let mut incoming = self.incoming.lock().unwrap();
+            let transfer_ids = incoming
+                .iter()
+                .filter(|(_, transfer)| transfer.peer_id == *peer_id)
+                .map(|(transfer_id, _)| transfer_id.clone())
+                .collect::<Vec<_>>();
+            transfer_ids
+                .into_iter()
+                .filter_map(|transfer_id| incoming.remove(&transfer_id))
+                .collect::<Vec<_>>()
+        };
+        for transfer in incoming {
+            if let Err(err) = self.cleanup_incoming(&transfer) {
+                tracing::warn!(?err, transfer_id = %transfer.transfer_id, "failed to clean interrupted incoming transfer");
+            }
+            self.emit(TransferEvent::Failed {
+                transfer_id: transfer.transfer_id,
+                peer_id: peer_id.clone(),
+                direction: TransferDirection::Receiving,
+                reason_code: "peer_disconnected".to_string(),
+            });
+        }
+
+        let (pending_outgoing, active_outgoing) = {
+            let outgoing = self.outgoing.lock().unwrap();
+            outgoing
+                .iter()
+                .filter(|(_, transfer)| transfer.peer_id == *peer_id)
+                .fold(
+                    (Vec::new(), Vec::new()),
+                    |mut ids, (transfer_id, transfer)| {
+                        if transfer.state.state == TransferState::Offered {
+                            ids.0.push(transfer_id.clone());
+                        } else {
+                            ids.1.push(transfer_id.clone());
+                        }
+                        ids
+                    },
+                )
+        };
+        for transfer_id in &active_outgoing {
+            self.cancelled.lock().unwrap().insert(transfer_id.clone());
+        }
+        if !pending_outgoing.is_empty() {
+            let mut outgoing = self.outgoing.lock().unwrap();
+            for transfer_id in pending_outgoing {
+                if let Some(transfer) = outgoing.remove(&transfer_id) {
+                    self.emit(TransferEvent::Failed {
+                        transfer_id,
+                        peer_id: transfer.peer_id,
+                        direction: TransferDirection::Sending,
+                        reason_code: "peer_disconnected".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    fn register_staging(&self, transfer_id: &str, staging_dir: PathBuf) -> anyhow::Result<()> {
+        let mut records = self.staging_records.lock().unwrap();
+        let previous = records.insert(transfer_id.to_string(), staging_dir);
+        if let Err(err) = persist_staging_records(&self.staging_index_path, &records) {
+            if let Some(previous) = previous {
+                records.insert(transfer_id.to_string(), previous);
+            } else {
+                records.remove(transfer_id);
+            }
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    fn unregister_staging(&self, transfer_id: &str) -> anyhow::Result<()> {
+        let mut records = self.staging_records.lock().unwrap();
+        let Some(previous) = records.remove(transfer_id) else {
+            return Ok(());
+        };
+        if let Err(err) = persist_staging_records(&self.staging_index_path, &records) {
+            records.insert(transfer_id.to_string(), previous);
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    fn cleanup_staging_path(&self, transfer_id: &str, staging_dir: &Path) -> anyhow::Result<()> {
+        cleanup_staging_directory(staging_dir)?;
+        self.unregister_staging(transfer_id)
+    }
+
+    fn cleanup_incoming(&self, transfer: &IncomingTransfer) -> anyhow::Result<()> {
+        if let Some(staging_dir) = &transfer.staging_dir {
+            self.cleanup_staging_path(&transfer.transfer_id, staging_dir)?;
+        } else {
+            self.unregister_staging(&transfer.transfer_id)?;
         }
         Ok(())
     }
@@ -1013,27 +1201,45 @@ fn validate_manifest(manifest: &TransferManifest) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn prepare_destination(destination: &Path, manifest: &TransferManifest) -> anyhow::Result<()> {
+fn staging_directory_for(destination: &Path) -> PathBuf {
+    destination
+        .join(STAGING_DIRECTORY_NAME)
+        .join(Uuid::new_v4().to_string())
+}
+
+fn prepare_staging_destination(
+    destination: &Path,
+    staging_dir: &Path,
+    manifest: &TransferManifest,
+) -> anyhow::Result<()> {
     validate_manifest(manifest)?;
-    fs::create_dir_all(destination)?;
     for entry in &manifest.entries {
         let path = safe_destination_path(destination, &entry.relative_path)?;
         match entry.kind {
-            ManifestEntryKind::Directory => fs::create_dir_all(path)?,
+            ManifestEntryKind::Directory => {
+                if path.exists() && !path.is_dir() {
+                    anyhow::bail!("destination directory already exists as a file")
+                }
+            }
             ManifestEntryKind::File => {
                 if path.exists() {
                     anyhow::bail!("destination file already exists")
                 }
+            }
+        }
+    }
+
+    fs::create_dir_all(staging_dir)?;
+    for entry in &manifest.entries {
+        let path = safe_destination_path(staging_dir, &entry.relative_path)?;
+        match entry.kind {
+            ManifestEntryKind::Directory => fs::create_dir_all(path)?,
+            ManifestEntryKind::File => {
                 if entry.size == 0 {
                     if let Some(parent) = path.parent() {
                         fs::create_dir_all(parent)?;
                     }
-                    let part = part_destination_path(&path);
-                    OpenOptions::new()
-                        .create_new(true)
-                        .write(true)
-                        .open(&part)?;
-                    fs::rename(part, path)?;
+                    OpenOptions::new().create_new(true).write(true).open(path)?;
                 }
             }
         }
@@ -1041,17 +1247,126 @@ fn prepare_destination(destination: &Path, manifest: &TransferManifest) -> anyho
     Ok(())
 }
 
-fn cleanup_incoming(transfer: &IncomingTransfer) {
-    let Some(destination) = &transfer.destination else {
-        return;
-    };
-    for entry in &transfer.manifest.entries {
-        if entry.kind == ManifestEntryKind::File {
-            if let Ok(path) = safe_destination_path(destination, &entry.relative_path) {
-                let _ = fs::remove_file(part_destination_path(&path));
+fn finalize_staging_destination(
+    destination: &Path,
+    staging_dir: &Path,
+    manifest: &TransferManifest,
+) -> anyhow::Result<()> {
+    validate_manifest(manifest)?;
+    for entry in &manifest.entries {
+        let path = safe_destination_path(destination, &entry.relative_path)?;
+        match entry.kind {
+            ManifestEntryKind::Directory => {
+                if path.exists() && !path.is_dir() {
+                    anyhow::bail!("destination directory already exists as a file")
+                }
+            }
+            ManifestEntryKind::File => {
+                if path.exists() {
+                    anyhow::bail!("destination file already exists")
+                }
             }
         }
     }
+
+    for entry in &manifest.entries {
+        if entry.kind != ManifestEntryKind::File {
+            continue;
+        }
+        let staged_path = safe_destination_path(staging_dir, &entry.relative_path)?;
+        let metadata = fs::metadata(&staged_path)
+            .map_err(|_| anyhow::anyhow!("staged file is missing: {}", entry.relative_path))?;
+        if metadata.len() != entry.size {
+            anyhow::bail!(
+                "staged file has an unexpected size: {}",
+                entry.relative_path
+            )
+        }
+    }
+
+    fs::create_dir_all(destination)?;
+    for entry in &manifest.entries {
+        if entry.kind != ManifestEntryKind::Directory {
+            continue;
+        }
+        fs::create_dir_all(safe_destination_path(destination, &entry.relative_path)?)?;
+    }
+
+    for entry in &manifest.entries {
+        if entry.kind != ManifestEntryKind::File {
+            continue;
+        }
+        let staged_path = safe_destination_path(staging_dir, &entry.relative_path)?;
+        let destination_path = safe_destination_path(destination, &entry.relative_path)?;
+        if let Some(parent) = destination_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::rename(staged_path, destination_path)?;
+    }
+    Ok(())
+}
+
+fn initialize_staging_index(index_path: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = index_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let records = if index_path.exists() {
+        let raw = fs::read_to_string(index_path)?;
+        serde_json::from_str::<Vec<StagingRecord>>(&raw)?
+    } else {
+        Vec::new()
+    };
+    for record in records {
+        if is_managed_staging_directory(&record.staging_dir) {
+            cleanup_staging_directory(&record.staging_dir)?;
+        }
+    }
+    persist_staging_records(index_path, &HashMap::new())
+}
+
+fn persist_staging_records(
+    index_path: &Path,
+    records: &HashMap<String, PathBuf>,
+) -> anyhow::Result<()> {
+    if let Some(parent) = index_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut serialized = records
+        .iter()
+        .map(|(transfer_id, staging_dir)| StagingRecord {
+            transfer_id: transfer_id.clone(),
+            staging_dir: staging_dir.clone(),
+        })
+        .collect::<Vec<_>>();
+    serialized.sort_by(|left, right| left.transfer_id.cmp(&right.transfer_id));
+    fs::write(index_path, serde_json::to_string_pretty(&serialized)?)?;
+    Ok(())
+}
+
+fn is_managed_staging_directory(path: &Path) -> bool {
+    path.parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        == Some(STAGING_DIRECTORY_NAME)
+}
+
+fn cleanup_staging_directory(path: &Path) -> anyhow::Result<()> {
+    if !is_managed_staging_directory(path) {
+        anyhow::bail!("unsafe staging directory: {}", path.display())
+    }
+
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path)?,
+        Ok(_) => fs::remove_file(path)?,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    if let Some(parent) = path.parent() {
+        let _ = fs::remove_dir(parent);
+    }
+    Ok(())
 }
 
 fn format_error_code(error: &anyhow::Error) -> String {
@@ -1143,6 +1458,8 @@ mod tests {
     #[test]
     fn empty_files_are_materialized_during_destination_preparation() {
         let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("destination");
+        let staging = destination.join(STAGING_DIRECTORY_NAME).join("transfer-1");
         let manifest = TransferManifest {
             root_name: "Empty".to_string(),
             total_bytes: 0,
@@ -1160,10 +1477,71 @@ mod tests {
             ],
         };
 
-        prepare_destination(root.path(), &manifest).unwrap();
+        prepare_staging_destination(&destination, &staging, &manifest).unwrap();
 
-        assert!(root.path().join("Empty/blank.txt").is_file());
-        assert!(!root.path().join("Empty/blank.txt.part").exists());
+        assert!(staging.join("Empty/blank.txt").is_file());
+        assert!(!destination.join("Empty/blank.txt").exists());
+    }
+
+    #[test]
+    fn staging_preparation_keeps_destination_clean_until_finalize() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("destination");
+        let staging = destination.join(STAGING_DIRECTORY_NAME).join("transfer-1");
+        let manifest = TransferManifest {
+            root_name: "Photos".to_string(),
+            total_bytes: 5,
+            entries: vec![
+                ManifestEntry {
+                    relative_path: "Photos".to_string(),
+                    kind: ManifestEntryKind::Directory,
+                    size: 0,
+                },
+                ManifestEntry {
+                    relative_path: "Photos/note.txt".to_string(),
+                    kind: ManifestEntryKind::File,
+                    size: 5,
+                },
+            ],
+        };
+
+        prepare_staging_destination(&destination, &staging, &manifest).unwrap();
+        fs::write(staging.join("Photos/note.txt"), b"hello").unwrap();
+
+        assert!(!destination.join("Photos/note.txt").exists());
+        finalize_staging_destination(&destination, &staging, &manifest).unwrap();
+        assert_eq!(
+            fs::read(destination.join("Photos/note.txt")).unwrap(),
+            b"hello"
+        );
+        cleanup_staging_directory(&staging).unwrap();
+        assert!(!staging.exists());
+    }
+
+    #[test]
+    fn stale_staging_index_is_cleaned_on_startup() {
+        let root = tempfile::tempdir().unwrap();
+        let staging = root
+            .path()
+            .join("destination")
+            .join(STAGING_DIRECTORY_NAME)
+            .join("stale");
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(staging.join("file.part"), b"partial").unwrap();
+        let index = root.path().join("cache").join("active-transfers.json");
+        let records = vec![StagingRecord {
+            transfer_id: "transfer-1".to_string(),
+            staging_dir: staging.clone(),
+        }];
+        fs::create_dir_all(index.parent().unwrap()).unwrap();
+        fs::write(&index, serde_json::to_vec(&records).unwrap()).unwrap();
+
+        initialize_staging_index(&index).unwrap();
+
+        assert!(!staging.exists());
+        let remaining: Vec<StagingRecord> =
+            serde_json::from_str(&fs::read_to_string(index).unwrap()).unwrap();
+        assert!(remaining.is_empty());
     }
 
     #[test]

@@ -65,7 +65,7 @@ Expected: existing command code still locks fields with `.lock().unwrap()`.
 - [x] **Step 2: Run Rust tests**
 
 ```powershell
-C:\Users\13565\.cargo\bin\cargo.exe test --manifest-path src-tauri\Cargo.toml commands::tests registry::tests
+cargo test --manifest-path src-tauri\Cargo.toml commands::tests registry::tests
 ```
 
 Expected: command and registry tests pass.
@@ -219,7 +219,7 @@ Expected: tests prove UI-visible registry changes happen without the Tauri app.
 - [x] **Step 4: Run discovery tests**
 
 ```powershell
-C:\Users\13565\.cargo\bin\cargo.exe test --manifest-path src-tauri\Cargo.toml discovery::tests registry::tests
+cargo test --manifest-path src-tauri\Cargo.toml discovery::tests registry::tests
 ```
 
 Expected: discovery and registry tests pass.
@@ -294,7 +294,7 @@ Expected: app compiles.
 - [x] **Step 4: Run full verification**
 
 ```powershell
-C:\Users\13565\.cargo\bin\cargo.exe test --manifest-path src-tauri\Cargo.toml
+cargo test --manifest-path src-tauri\Cargo.toml
 pnpm build
 ```
 
@@ -303,7 +303,7 @@ Expected: Rust tests and frontend build pass.
 - [x] **Step 5: Run manual dev smoke**
 
 ```powershell
-$env:PATH = 'C:\Users\13565\.cargo\bin;' + $env:PATH
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 pnpm tauri dev
 ```
 
@@ -330,7 +330,7 @@ Update this file so every completed step is checked.
 - [x] **Step 2: Run final verification**
 
 ```powershell
-C:\Users\13565\.cargo\bin\cargo.exe test --manifest-path src-tauri\Cargo.toml
+cargo test --manifest-path src-tauri\Cargo.toml
 pnpm build
 git status --short
 ```

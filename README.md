@@ -1,8 +1,8 @@
-# LAN Cross Sync
+# LAN Cross Sync（局域网跨设备同步）
 
 LAN Cross Sync 是一个基于 Tauri v2、React、TypeScript 和 Rust 的桌面应用，用于在同一局域网内的 Windows 和 macOS 设备之间同步剪贴板内容和传输文件。
 
-当前版本是可运行的 MVP：已实现设备发现、6 位配对、配对设备授权连接、文本/图片剪贴板同步、文件和目录传输、断线重连、临时文件清理、系统托盘、开机启动，以及简体中文/英文界面切换。
+当前版本是可运行的最小可用版本（MVP）：已实现设备发现、6 位配对、配对设备授权连接、文本/图片剪贴板同步、文件和目录传输、断线重连、临时文件清理、系统托盘、开机启动，以及简体中文/英文界面切换。
 
 项目定位是可信局域网内使用。目前未实现端到端加密、断点续传、带宽限制、剪贴板历史、互联网中继和 NAT 穿透。
 
@@ -43,9 +43,9 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 pnpm tauri build --no-sign
 ```
 
-NSIS、MSI 和裸 Release 可执行文件会生成在 `src-tauri\target\release\` 下。普通用户优先使用 `bundle\nsis\*-setup.exe`；MSI 更适合企业部署。macOS 安装包必须在 macOS 或 macOS CI 上构建，Windows 不能直接生成 DMG。
+NSIS、MSI 和裸发布版可执行文件会生成在 `src-tauri\target\release\` 下。普通用户优先使用 `bundle\nsis\*-setup.exe`；MSI 更适合企业部署。macOS 安装包必须在 macOS 或 macOS 持续集成环境上构建，Windows 不能直接生成 DMG。
 
-Windows 本地设置通常位于：
+Windows 本地设置通常位于以下系统路径。这里使用的是系统环境变量，不包含具体用户名：
 
 ```text
 %APPDATA%\com.local.lancrosssync\settings.json

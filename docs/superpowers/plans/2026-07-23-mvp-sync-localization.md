@@ -61,7 +61,7 @@ Add tests that assert:
 
 ```rust
 assert_eq!(crate::protocol::PROTOCOL_VERSION, 2);
-let endpoint = "192.168.1.10:45731".parse().unwrap();
+let endpoint = "192.0.2.10:45731".parse().unwrap();
 registry.mark_discovered_at(remote.clone(), endpoint);
 assert_eq!(registry.endpoint(&remote.id), Some(endpoint));
 ```
@@ -377,4 +377,4 @@ git commit -m "docs: add MVP acceptance and packaging guidance"
 - Scope coverage: Tasks 1-2 cover pairing and trusted persistence; Task 3 covers transport, heartbeat, reconnect, and state; Tasks 4-5 cover text/image clipboard and file/folder transfer; Tasks 6-7 cover Tauri lifecycle, dialogs, UI, and Simplified Chinese; Task 8 covers CSP, capabilities, packaging, permissions, and two-device acceptance.
 - Placeholder scan: no task relies on `TBD`, `TODO`, or unspecified future work; out-of-scope iteration 8 items are explicitly named.
 - Type consistency: pairing IDs use `request_id` and `session_id`; transfer operations use `transfer_id`; UI commands and event payloads use the same snake_case DTO names as Rust serialization.
-- Residual acceptance gap: this Windows workspace cannot prove macOS compilation or real Mac/Windows behavior. The plan requires a macOS host or CI runner for that final portion and reports it rather than treating Windows loopback as equivalent.
+- Residual acceptance gap: a Windows development environment cannot prove macOS compilation or real Mac/Windows behavior. The plan requires a macOS host or CI runner for that final portion and reports it rather than treating Windows loopback as equivalent.

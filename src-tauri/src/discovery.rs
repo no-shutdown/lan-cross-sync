@@ -370,7 +370,7 @@ mod tests {
         let encoded = encode_discovery(remote.clone()).unwrap();
         let mut registry = PeerRegistry::new();
 
-        let source: SocketAddr = "192.168.1.20:45731".parse().unwrap();
+        let source: SocketAddr = "192.0.2.20:45731".parse().unwrap();
         let applied =
             apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
 
@@ -384,7 +384,7 @@ mod tests {
         let encoded = encode_discovery(local.clone()).unwrap();
         let mut registry = PeerRegistry::new();
 
-        let source: SocketAddr = "192.168.1.20:45731".parse().unwrap();
+        let source: SocketAddr = "192.0.2.20:45731".parse().unwrap();
         let applied =
             apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
 
@@ -397,7 +397,7 @@ mod tests {
         let local = DeviceInfo::new_local("Windows Desk", 45731);
         let remote = DeviceInfo::new_local("MacBook", 45731);
         let encoded = encode_discovery(remote.clone()).unwrap();
-        let source: SocketAddr = "192.168.1.20:45731".parse().unwrap();
+        let source: SocketAddr = "192.0.2.20:45731".parse().unwrap();
         let mut registry = PeerRegistry::new();
 
         let applied =
@@ -419,7 +419,7 @@ mod tests {
             state: PeerConnectionState::Offline,
         }]);
 
-        let source: SocketAddr = "192.168.1.20:45731".parse().unwrap();
+        let source: SocketAddr = "192.0.2.20:45731".parse().unwrap();
         let applied =
             apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
 

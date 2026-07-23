@@ -62,7 +62,7 @@ Create or modify these files:
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git init
 git add docs/superpowers/specs/2026-07-23-lan-cross-device-sync-design.md docs/superpowers/plans/2026-07-23-connection-foundation.md
 git commit -m "docs: add LAN cross sync design and foundation plan"
@@ -75,7 +75,7 @@ Expected: a new repository is created and the approved design/plan are committed
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 pnpm create tauri-app@latest .
 ```
 
@@ -98,7 +98,7 @@ Expected: `package.json`, `src`, and `src-tauri` are created without deleting th
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 pnpm install
 pnpm tauri add autostart
 cargo add serde --features derive --manifest-path src-tauri/Cargo.toml
@@ -121,7 +121,7 @@ Expected: frontend dependencies install, the Tauri autostart plugin is added, an
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 pnpm build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
@@ -133,7 +133,7 @@ Expected: frontend build succeeds and Rust tests pass.
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git add package.json pnpm-lock.yaml src src-tauri
 git commit -m "chore: scaffold Tauri app"
 ```
@@ -264,7 +264,7 @@ mod tests {
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 cargo test --manifest-path src-tauri/Cargo.toml domain::tests -- --nocapture
 ```
 
@@ -283,7 +283,7 @@ mod domain;
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
@@ -294,7 +294,7 @@ Expected: all Rust tests pass.
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git add src-tauri/src/domain.rs src-tauri/src/lib.rs
 git commit -m "feat: add core device domain types"
 ```
@@ -437,7 +437,7 @@ mod settings;
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 cargo test --manifest-path src-tauri/Cargo.toml settings::tests -- --nocapture
 ```
 
@@ -448,7 +448,7 @@ Expected: settings persistence tests pass.
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git add src-tauri/src/settings.rs src-tauri/src/lib.rs
 git commit -m "feat: persist local device settings"
 ```
@@ -565,7 +565,7 @@ mod settings;
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 cargo test --manifest-path src-tauri/Cargo.toml protocol::tests -- --nocapture
 ```
 
@@ -576,7 +576,7 @@ Expected: protocol tests pass.
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git add src-tauri/src/protocol.rs src-tauri/src/lib.rs
 git commit -m "feat: add LAN protocol messages"
 ```
@@ -681,7 +681,7 @@ mod settings;
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 cargo test --manifest-path src-tauri/Cargo.toml pairing::tests -- --nocapture
 ```
 
@@ -692,7 +692,7 @@ Expected: pairing tests pass.
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git add src-tauri/src/pairing.rs src-tauri/src/lib.rs
 git commit -m "feat: add pairing state machine"
 ```
@@ -812,7 +812,7 @@ mod settings;
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 cargo test --manifest-path src-tauri/Cargo.toml registry::tests -- --nocapture
 ```
 
@@ -823,7 +823,7 @@ Expected: registry tests pass.
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git add src-tauri/src/registry.rs src-tauri/src/lib.rs
 git commit -m "feat: track discovered and paired devices"
 ```
@@ -922,7 +922,7 @@ mod settings;
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 cargo test --manifest-path src-tauri/Cargo.toml discovery::tests -- --nocapture
 ```
 
@@ -933,7 +933,7 @@ Expected: discovery tests pass.
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git add src-tauri/src/discovery.rs src-tauri/src/lib.rs
 git commit -m "feat: add LAN discovery packets"
 ```
@@ -1165,7 +1165,7 @@ pub fn run() {
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm build
 ```
@@ -1177,7 +1177,7 @@ Expected: Rust tests and frontend build pass.
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git add src-tauri/src/error.rs src-tauri/src/commands.rs src-tauri/src/lib.rs
 git commit -m "feat: expose connection foundation commands"
 ```
@@ -1577,7 +1577,7 @@ button:disabled {
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 pnpm build
 ```
 
@@ -1588,7 +1588,7 @@ Expected: TypeScript and Vite build pass.
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git add src/lib/types.ts src/lib/api.ts src/App.tsx src/App.css
 git commit -m "feat: add connection control panel"
 ```
@@ -1752,7 +1752,7 @@ Add this style to `src/App.css`:
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm build
 ```
@@ -1764,7 +1764,7 @@ Expected: Rust tests and frontend build pass.
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git add src-tauri/src/commands.rs src-tauri/src/lib.rs src-tauri/capabilities/default.json src/lib/api.ts src/App.tsx src/App.css
 git commit -m "feat: add autostart control"
 ```
@@ -1781,7 +1781,7 @@ Expected: autostart commands and UI are committed.
 Run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 pnpm tauri dev
 ```
 
@@ -1796,10 +1796,10 @@ File drop area
 Startup
 ```
 
-Execution note: On this Windows machine, `cargo` was installed under Rustup but was not present on the active PowerShell `PATH`. The dev app was started with a temporary PATH prefix:
+Execution note: In a Windows development environment, `cargo` may be installed under Rustup without being present on the active PowerShell `PATH`. The dev app can be started with a temporary PATH prefix:
 
 ```powershell
-$env:PATH = 'C:\Users\13565\.cargo\bin;' + $env:PATH
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 pnpm tauri dev
 ```
 
@@ -1831,7 +1831,7 @@ Expected: pairing code appears and clears without app restart.
 Stop the dev app and run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm build
 ```
@@ -1843,7 +1843,7 @@ Expected: all tests pass and frontend build succeeds.
 If no plan corrections were needed, skip this commit. If the plan was corrected during execution, run:
 
 ```powershell
-cd C:\A-my\lan-cross-sync
+cd path\to\lan-cross-sync
 git add docs/superpowers/plans/2026-07-23-connection-foundation.md
 git commit -m "docs: update foundation implementation notes"
 ```

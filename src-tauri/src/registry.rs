@@ -260,7 +260,7 @@ mod tests {
         let mut registry = PeerRegistry::new();
         let device = DeviceInfo::new_local("MacBook", 45731);
         let device_id = device.id.clone();
-        let endpoint: SocketAddr = "192.168.1.10:45731".parse().unwrap();
+        let endpoint: SocketAddr = "192.0.2.10:45731".parse().unwrap();
 
         registry.mark_discovered_at(device, endpoint);
 

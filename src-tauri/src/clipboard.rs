@@ -5,6 +5,8 @@ use crate::{
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_os = "windows"))]
+use std::time::Duration;
 use std::{
     borrow::Cow,
     collections::HashSet,
@@ -13,12 +15,16 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
+#[cfg(target_os = "windows")]
+use tokio::sync::mpsc;
+#[cfg(not(target_os = "windows"))]
 use tokio::time;
 use uuid::Uuid;
 
+#[cfg(not(target_os = "windows"))]
 pub const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(500);
 pub const MAX_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 
@@ -145,57 +151,85 @@ impl ClipboardService {
     }
 
     pub async fn run(self) -> anyhow::Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            return self.run_windows().await;
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        self.run_polling().await
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn run_windows(self) -> anyhow::Result<()> {
+        let mut signals = start_windows_listener();
+        while let Some(signal) = signals.recv().await {
+            signal.map_err(|err| anyhow::anyhow!("clipboard listener stopped: {err}"))?;
+            if self.has_active_target() {
+                self.process_local_change().await?;
+            }
+        }
+
+        anyhow::bail!("clipboard listener channel closed")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    async fn run_polling(self) -> anyhow::Result<()> {
         let mut interval = time::interval(CLIPBOARD_POLL_INTERVAL);
         loop {
             interval.tick().await;
             if !self.has_active_target() {
                 continue;
             }
-            let payload = tokio::task::spawn_blocking(read_system_clipboard)
-                .await
-                .map_err(|err| anyhow::anyhow!("clipboard worker stopped: {err}"))?;
-            let Ok(Some(payload)) = payload else {
-                continue;
-            };
+            self.process_local_change().await?;
+        }
+    }
 
-            let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-            let event = match event_from_payload(
-                self.local_device.id.clone(),
-                sequence,
-                timestamp_ms(),
-                payload,
-            ) {
-                Ok(event) => event,
-                Err(err) => {
-                    tracing::debug!(?err, "ignored local clipboard payload");
-                    continue;
-                }
-            };
-            if !self.tracker.lock().unwrap().observe_local(&event) {
-                continue;
+    async fn process_local_change(&self) -> anyhow::Result<()> {
+        let payload = tokio::task::spawn_blocking(read_system_clipboard)
+            .await
+            .map_err(|err| anyhow::anyhow!("clipboard worker stopped: {err}"))?;
+        let Ok(Some(payload)) = payload else {
+            return Ok(());
+        };
+
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+        let event = match event_from_payload(
+            self.local_device.id.clone(),
+            sequence,
+            timestamp_ms(),
+            payload,
+        ) {
+            Ok(event) => event,
+            Err(err) => {
+                tracing::debug!(?err, "ignored local clipboard payload");
+                return Ok(());
             }
+        };
+        if !self.tracker.lock().unwrap().observe_local(&event) {
+            return Ok(());
+        }
 
-            let peer_ids = self
-                .settings
-                .lock()
-                .unwrap()
-                .paired_peers
-                .iter()
-                .filter(|peer| {
-                    peer.receive_clipboard && self.transport.is_connected(&peer.device.id)
-                })
-                .map(|peer| peer.device.id.clone())
-                .collect::<Vec<_>>();
-            for peer_id in peer_ids {
-                if let Err(err) = self
-                    .transport
-                    .send_message(&peer_id, TransportMessage::Clipboard(event.clone()))
-                    .await
-                {
-                    tracing::debug!(?err, device_id = ?peer_id, "failed to send clipboard event");
-                }
+        let peer_ids = self
+            .settings
+            .lock()
+            .unwrap()
+            .paired_peers
+            .iter()
+            .filter(|peer| peer.receive_clipboard && self.transport.is_connected(&peer.device.id))
+            .map(|peer| peer.device.id.clone())
+            .collect::<Vec<_>>();
+        for peer_id in peer_ids {
+            if let Err(err) = self
+                .transport
+                .send_message(&peer_id, TransportMessage::Clipboard(event.clone()))
+                .await
+            {
+                tracing::debug!(?err, device_id = ?peer_id, "failed to send clipboard event");
             }
         }
+
+        Ok(())
     }
 
     fn has_active_target(&self) -> bool {
@@ -226,6 +260,36 @@ impl ClipboardService {
         write_system_clipboard(&event.payload)?;
         Ok(true)
     }
+}
+
+#[cfg(target_os = "windows")]
+fn start_windows_listener() -> mpsc::UnboundedReceiver<Result<(), String>> {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    std::thread::spawn(move || {
+        let mut monitor = match clipboard_win::Monitor::new() {
+            Ok(monitor) => monitor,
+            Err(err) => {
+                let _ = sender.send(Err(format!("{err:?}")));
+                return;
+            }
+        };
+
+        for result in &mut monitor {
+            match result {
+                Ok(true) => {
+                    if sender.send(Ok(())).is_err() {
+                        break;
+                    }
+                }
+                Ok(false) => break,
+                Err(err) => {
+                    let _ = sender.send(Err(format!("{err:?}")));
+                    break;
+                }
+            }
+        }
+    });
+    receiver
 }
 
 fn has_active_clipboard_target<F>(settings: &LocalSettings, is_connected: F) -> bool

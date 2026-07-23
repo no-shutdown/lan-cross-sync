@@ -5,6 +5,7 @@ use crate::{
     protocol::PROTOCOL_VERSION,
     registry::PeerRegistry,
 };
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -24,6 +25,33 @@ use uuid::Uuid;
 pub const MAX_CONTROL_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
+
+pub async fn bind_transport_listener(preferred_port: u16) -> Result<(TcpListener, u16, bool)> {
+    match TcpListener::bind(("0.0.0.0", preferred_port)).await {
+        Ok(listener) => {
+            let port = listener
+                .local_addr()
+                .context("failed to read TCP transport listener address")?
+                .port();
+            Ok((listener, port, false))
+        }
+        Err(preferred_error) => {
+            tracing::warn!(
+                preferred_port,
+                ?preferred_error,
+                "preferred TCP transport port is unavailable; selecting an OS-assigned port"
+            );
+            let listener = TcpListener::bind(("0.0.0.0", 0))
+                .await
+                .context("failed to bind an OS-assigned TCP transport port")?;
+            let port = listener
+                .local_addr()
+                .context("failed to read fallback TCP transport listener address")?
+                .port();
+            Ok((listener, port, true))
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum TransportError {
@@ -334,8 +362,7 @@ impl TransportRuntime {
         )
     }
 
-    pub async fn listen_loop(self, port: u16) -> anyhow::Result<()> {
-        let listener = TcpListener::bind(("0.0.0.0", port)).await?;
+    pub async fn listen_loop(self, listener: TcpListener) -> anyhow::Result<()> {
         loop {
             let (stream, _) = listener.accept().await?;
             let runtime = self.clone();
@@ -351,7 +378,7 @@ impl TransportRuntime {
         let (endpoint, local_device) = {
             let registry = self.registry.lock().unwrap();
             let endpoint = registry
-                .endpoint(&peer_id)
+                .transport_endpoint(&peer_id)
                 .ok_or(TransportError::NotConnected)?;
             (endpoint, self.local_device.clone())
         };
@@ -392,7 +419,7 @@ impl TransportRuntime {
                     .into_iter()
                     .filter_map(|peer| {
                         let id = peer.device.id;
-                        (registry.endpoint(&id).is_some()
+                        (registry.transport_endpoint(&id).is_some()
                             && !self.is_connected(&id)
                             && self.mark_connecting(id.clone()))
                         .then_some(id)
@@ -654,6 +681,19 @@ mod tests {
 
         write_task.await.unwrap();
         assert_eq!(message, expected);
+    }
+
+    #[tokio::test]
+    async fn preferred_tcp_port_falls_back_when_occupied() {
+        let occupied = TcpListener::bind(("0.0.0.0", 0)).await.unwrap();
+        let occupied_port = occupied.local_addr().unwrap().port();
+
+        let (listener, actual_port, used_fallback) =
+            bind_transport_listener(occupied_port).await.unwrap();
+
+        assert!(used_fallback);
+        assert_ne!(actual_port, occupied_port);
+        assert_eq!(listener.local_addr().unwrap().port(), actual_port);
     }
 
     #[test]

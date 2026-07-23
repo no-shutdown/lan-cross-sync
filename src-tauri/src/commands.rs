@@ -5,7 +5,7 @@ use crate::{
     pairing::{PairingRuntime, PairingSession},
     protocol::{encode_message, LanMessage, PairingRequest, PROTOCOL_VERSION},
     registry::PeerRegistry,
-    settings::SettingsStore,
+    settings::{SettingsStore, DEFAULT_DISCOVERY_PORT},
     transport::TransportRuntime,
 };
 use serde::Serialize;
@@ -27,6 +27,48 @@ pub struct AppState {
     pub pairing: Arc<PairingRuntime>,
     pub transport: Arc<TransportRuntime>,
     pub transfers: Arc<FileTransferService>,
+    pub network_status: Arc<Mutex<NetworkStatus>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NetworkStatus {
+    pub discovery_port: u16,
+    pub transport_port: Option<u16>,
+    pub discovery_ready: bool,
+    pub transport_ready: bool,
+    pub advertising: bool,
+    pub issue_code: Option<String>,
+}
+
+impl NetworkStatus {
+    pub fn from_bindings(
+        discovery_ready: bool,
+        transport_port: Option<u16>,
+        transport_fallback: bool,
+    ) -> Self {
+        let transport_ready = transport_port.is_some();
+        let advertising = discovery_ready && transport_ready;
+        let issue_code = if !discovery_ready && !transport_ready {
+            Some("network_services_unavailable".to_string())
+        } else if !discovery_ready {
+            Some("network_discovery_unavailable".to_string())
+        } else if !transport_ready {
+            Some("network_transport_unavailable".to_string())
+        } else if transport_fallback {
+            Some("transport_port_fallback".to_string())
+        } else {
+            None
+        };
+
+        Self {
+            discovery_port: DEFAULT_DISCOVERY_PORT,
+            transport_port,
+            discovery_ready,
+            transport_ready,
+            advertising,
+            issue_code,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -36,6 +78,7 @@ pub struct DashboardState {
     pub paired_devices: Vec<PairedPeer>,
     pub active_pairing_code: Option<String>,
     pub pairing_error_code: Option<String>,
+    pub network_status: NetworkStatus,
 }
 
 #[tauri::command]
@@ -47,6 +90,7 @@ pub fn get_dashboard_state(state: State<'_, AppState>) -> AppResult<DashboardSta
     let paired_devices = registry.paired();
     settings.paired_peers = paired_devices.clone();
     let pairing_error_code = state.pairing.last_error.lock().unwrap().clone();
+    let network_status = state.network_status.lock().unwrap().clone();
 
     Ok(DashboardState {
         settings,
@@ -54,6 +98,7 @@ pub fn get_dashboard_state(state: State<'_, AppState>) -> AppResult<DashboardSta
         discovered_devices: registry.discovered(),
         active_pairing_code,
         pairing_error_code,
+        network_status,
     })
 }
 
@@ -128,7 +173,7 @@ pub async fn request_pairing(
             .device(&device_id)
             .ok_or_else(|| AppError::Message("device_not_found".to_string()))?;
         let endpoint = registry
-            .endpoint(&device_id)
+            .discovery_endpoint(&device_id)
             .ok_or_else(|| AppError::Message("device_endpoint_unavailable".to_string()))?;
         let local_device = state.settings.lock().unwrap().local_device.clone();
         (target, endpoint, local_device)
@@ -418,5 +463,26 @@ mod tests {
 
         assert_eq!(code, Some("123456".to_string()));
         assert!(active_pairing.is_some());
+    }
+
+    #[test]
+    fn network_status_reports_fallback_and_binding_failures() {
+        let status = NetworkStatus::from_bindings(true, Some(46001), true);
+        let json = serde_json::to_value(status).unwrap();
+
+        assert_eq!(json["discovery_port"], DEFAULT_DISCOVERY_PORT);
+        assert_eq!(json["transport_port"], 46001);
+        assert_eq!(json["discovery_ready"], true);
+        assert_eq!(json["transport_ready"], true);
+        assert_eq!(json["advertising"], true);
+        assert_eq!(json["issue_code"], "transport_port_fallback");
+
+        let unavailable = NetworkStatus::from_bindings(false, None, false);
+        let unavailable_json = serde_json::to_value(unavailable).unwrap();
+        assert_eq!(unavailable_json["advertising"], false);
+        assert_eq!(
+            unavailable_json["issue_code"],
+            "network_services_unavailable"
+        );
     }
 }

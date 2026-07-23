@@ -17,12 +17,12 @@ use commands::{
     accept_file_transfer, cancel_file_transfer, cancel_pairing, clear_pairing,
     get_autostart_enabled, get_dashboard_state, request_pairing, set_autostart_enabled,
     set_default_file_target, set_receive_clipboard, set_ui_locale, start_file_transfer,
-    start_pairing, AppState,
+    start_pairing, AppState, NetworkStatus,
 };
 use file_transfer::FileTransferService;
 use pairing::PairingRuntime;
 use registry::PeerRegistry;
-use settings::SettingsStore;
+use settings::{SettingsStore, DEFAULT_DISCOVERY_PORT};
 use std::sync::{Arc, Mutex};
 use tauri::{
     menu::MenuBuilder,
@@ -51,13 +51,57 @@ pub fn run() {
                 .app_config_dir()
                 .expect("failed to resolve app config directory");
             let settings_store = SettingsStore::new(app_config.join("settings.json"));
-            let settings = settings_store
+            let mut loaded_settings = settings_store
                 .load_or_create("LAN Cross Sync")
                 .expect("failed to load settings");
-            let registry = PeerRegistry::from_paired(settings.paired_peers.clone());
-            let discovery_device = settings.local_device.clone();
-            let discovery_port = discovery_device.port;
-            let settings = Arc::new(Mutex::new(settings));
+            let preferred_transport_port = loaded_settings.local_device.port;
+            let (transport_listener, transport_port, transport_fallback) =
+                match tauri::async_runtime::block_on(transport::bind_transport_listener(
+                    preferred_transport_port,
+                )) {
+                    Ok((listener, port, used_fallback)) => {
+                        (Some(listener), Some(port), used_fallback)
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            ?err,
+                            preferred_transport_port,
+                            "TCP transport listener could not be bound"
+                        );
+                        (None, None, false)
+                    }
+                };
+            let discovery_socket = match tauri::async_runtime::block_on(
+                discovery::bind_discovery_socket(DEFAULT_DISCOVERY_PORT),
+            ) {
+                Ok(socket) => Some(socket),
+                Err(err) => {
+                    tracing::error!(?err, "LAN discovery UDP listener could not be bound");
+                    None
+                }
+            };
+
+            let discovery_ready = discovery_socket.is_some();
+            let transport_ready = transport_listener.is_some();
+            let network_status = Arc::new(Mutex::new(NetworkStatus::from_bindings(
+                discovery_ready,
+                transport_port,
+                transport_fallback,
+            )));
+            let advertising = network_status.lock().unwrap().advertising;
+
+            if let Some(actual_port) = transport_port {
+                if loaded_settings.local_device.port != actual_port {
+                    loaded_settings.local_device.port = actual_port;
+                    if let Err(err) = settings_store.save(&loaded_settings) {
+                        tracing::error!(?err, "failed to persist the active TCP transport port");
+                    }
+                }
+            }
+
+            let registry = PeerRegistry::from_paired(loaded_settings.paired_peers.clone());
+            let discovery_device = loaded_settings.local_device.clone();
+            let settings = Arc::new(Mutex::new(loaded_settings));
             let registry = Arc::new(Mutex::new(registry));
             let active_pairing = Arc::new(Mutex::new(None));
             let (transport_runtime, mut transport_events) =
@@ -93,35 +137,49 @@ pub fn run() {
                 pairing: pairing.clone(),
                 transport: transport.clone(),
                 transfers: transfers.clone(),
+                network_status: network_status.clone(),
             });
 
-            tauri::async_runtime::spawn(async move {
-                if let Err(err) = discovery::announce_loop(discovery_device, discovery_port).await {
-                    tracing::error!(?err, "LAN discovery announcer stopped");
-                }
-            });
-            let receive_pairing = pairing.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(err) =
-                    discovery::receive_loop_with_pairing(discovery_port, receive_pairing).await
-                {
-                    tracing::error!(?err, "LAN discovery receiver stopped");
-                }
-            });
+            if advertising {
+                let announce_device = discovery_device.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) =
+                        discovery::announce_loop(announce_device, DEFAULT_DISCOVERY_PORT).await
+                    {
+                        tracing::error!(?err, "LAN discovery announcer stopped");
+                    }
+                });
+            }
 
-            let listen_transport = (*transport).clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(err) = listen_transport.listen_loop(discovery_port).await {
-                    tracing::error!(?err, "TCP transport listener stopped");
-                }
-            });
+            if let Some(discovery_socket) = discovery_socket {
+                let receive_pairing = pairing.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) =
+                        discovery::receive_loop_with_pairing(discovery_socket, receive_pairing)
+                            .await
+                    {
+                        tracing::error!(?err, "LAN discovery receiver stopped");
+                    }
+                });
+            }
 
-            let maintain_transport = (*transport).clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(err) = maintain_transport.maintain_connections().await {
-                    tracing::error!(?err, "TCP reconnect loop stopped");
-                }
-            });
+            if let Some(transport_listener) = transport_listener {
+                let listen_transport = (*transport).clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = listen_transport.listen_loop(transport_listener).await {
+                        tracing::error!(?err, "TCP transport listener stopped");
+                    }
+                });
+            }
+
+            if transport_ready {
+                let maintain_transport = (*transport).clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = maintain_transport.maintain_connections().await {
+                        tracing::error!(?err, "TCP reconnect loop stopped");
+                    }
+                });
+            }
 
             let clipboard_loop = clipboard.clone();
             tauri::async_runtime::spawn(async move {

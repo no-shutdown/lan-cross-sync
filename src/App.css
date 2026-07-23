@@ -167,6 +167,67 @@ button:focus-visible {
   color: #a32020;
 }
 
+.network-status {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d7dfe7;
+  border-radius: 8px;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding: 14px 18px;
+}
+
+.network-status-ready {
+  background: #f4fbf7;
+  border-color: #b9ddc7;
+}
+
+.network-status-warning {
+  background: #fffaf0;
+  border-color: #e4c98a;
+}
+
+.network-status-error {
+  background: #fff7f7;
+  border-color: #e0a3a3;
+}
+
+.network-status-copy {
+  min-width: 0;
+}
+
+.network-status-title {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.network-status-title h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.network-status p {
+  color: #647282;
+  margin: 5px 0 0;
+}
+
+.network-endpoints {
+  color: #4e5d6b;
+  display: grid;
+  flex: 0 0 auto;
+  font-size: 12px;
+  gap: 4px;
+  text-align: right;
+}
+
+.network-endpoints strong {
+  color: #18222d;
+}
+
 .pairing-code {
   border: 1px dashed #7e8d9d;
   border-radius: 7px;
@@ -382,7 +443,8 @@ button:focus-visible {
   .topbar,
   .panel-title,
   .peer-card,
-  .transfer-offer {
+  .transfer-offer,
+  .network-status {
     align-items: stretch;
     flex-direction: column;
   }
@@ -397,6 +459,11 @@ button:focus-visible {
   .language-select,
   .target-select,
   .target-select select {
+    width: 100%;
+  }
+
+  .network-endpoints {
+    text-align: left;
     width: 100%;
   }
 

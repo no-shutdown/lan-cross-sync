@@ -26,12 +26,22 @@ export interface LocalSettings {
 
 export type Locale = 'zh-CN' | 'en-US'
 
+export interface NetworkStatus {
+  discovery_port: number
+  transport_port: number | null
+  discovery_ready: boolean
+  transport_ready: boolean
+  advertising: boolean
+  issue_code: string | null
+}
+
 export interface DashboardState {
   settings: LocalSettings
   discovered_devices: DeviceInfo[]
   paired_devices: PairedPeer[]
   active_pairing_code: string | null
   pairing_error_code: string | null
+  network_status: NetworkStatus
 }
 
 export interface ManifestEntry {

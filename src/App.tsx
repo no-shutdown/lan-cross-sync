@@ -66,6 +66,17 @@ function backendError(locale: Locale, err: unknown, fallback: string): string {
   return known[raw] ? t(locale, known[raw]) : raw
 }
 
+function networkStatusText(locale: Locale, issueCode: string | null): string {
+  const known: Record<string, Parameters<typeof t>[1]> = {
+    network_not_ready: 'networkNotReady',
+    network_discovery_unavailable: 'networkDiscoveryUnavailable',
+    network_transport_unavailable: 'networkTransportUnavailable',
+    network_services_unavailable: 'networkServicesUnavailable',
+    transport_port_fallback: 'networkTransportFallback',
+  }
+  return t(locale, known[issueCode ?? ''] ?? 'networkReady')
+}
+
 function PeerCard({
   locale,
   peer,
@@ -469,6 +480,35 @@ export default function App() {
       {dashboard.pairing_error_code && (
         <section className="error">{backendError(locale, dashboard.pairing_error_code, t(locale, 'errorPairing'))}</section>
       )}
+
+      <section
+        className={`network-status ${
+          dashboard.network_status.advertising
+            ? dashboard.network_status.issue_code
+              ? 'network-status-warning'
+              : 'network-status-ready'
+            : 'network-status-error'
+        }`}
+        aria-live="polite"
+      >
+        <div className="network-status-copy">
+          <div className="network-status-title">
+            <h2>{t(locale, 'networkStatus')}</h2>
+            <span className="status">
+              {dashboard.network_status.advertising ? t(locale, 'advertising') : t(locale, 'notAdvertising')}
+            </span>
+          </div>
+          <p>{networkStatusText(locale, dashboard.network_status.issue_code)}</p>
+        </div>
+        <div className="network-endpoints">
+          <span>
+            <strong>{t(locale, 'udpPort')}</strong> {dashboard.network_status.discovery_port}
+          </span>
+          <span>
+            <strong>{t(locale, 'tcpPort')}</strong> {dashboard.network_status.transport_port ?? '-'}
+          </span>
+        </div>
+      </section>
 
       <section className="panel">
         <div className="panel-title">

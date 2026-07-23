@@ -1,4 +1,5 @@
 use crate::domain::{DeviceId, DeviceInfo, PairedPeer, PeerConnectionState};
+use crate::settings::DEFAULT_DISCOVERY_PORT;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
@@ -6,7 +7,8 @@ use std::net::SocketAddr;
 pub struct PeerRegistry {
     discovered: HashMap<DeviceId, DeviceInfo>,
     paired: HashMap<DeviceId, PairedPeer>,
-    endpoints: HashMap<DeviceId, SocketAddr>,
+    discovery_endpoints: HashMap<DeviceId, SocketAddr>,
+    transport_endpoints: HashMap<DeviceId, SocketAddr>,
 }
 
 impl PeerRegistry {
@@ -23,7 +25,8 @@ impl PeerRegistry {
         Self {
             discovered: HashMap::new(),
             paired,
-            endpoints: HashMap::new(),
+            discovery_endpoints: HashMap::new(),
+            transport_endpoints: HashMap::new(),
         }
     }
 
@@ -32,8 +35,14 @@ impl PeerRegistry {
         self.upsert_discovered(device);
     }
 
-    pub fn mark_discovered_at(&mut self, device: DeviceInfo, endpoint: SocketAddr) {
-        self.endpoints.insert(device.id.clone(), endpoint);
+    pub fn mark_discovered_at(&mut self, device: DeviceInfo, source: SocketAddr) {
+        let ip = source.ip();
+        self.discovery_endpoints.insert(
+            device.id.clone(),
+            SocketAddr::new(ip, DEFAULT_DISCOVERY_PORT),
+        );
+        self.transport_endpoints
+            .insert(device.id.clone(), SocketAddr::new(ip, device.port));
         self.upsert_discovered(device);
     }
 
@@ -76,11 +85,16 @@ impl PeerRegistry {
     pub fn remove_pairing(&mut self, id: &DeviceId) {
         self.paired.remove(id);
         self.discovered.remove(id);
-        self.endpoints.remove(id);
+        self.discovery_endpoints.remove(id);
+        self.transport_endpoints.remove(id);
     }
 
-    pub fn endpoint(&self, id: &DeviceId) -> Option<SocketAddr> {
-        self.endpoints.get(id).copied()
+    pub fn discovery_endpoint(&self, id: &DeviceId) -> Option<SocketAddr> {
+        self.discovery_endpoints.get(id).copied()
+    }
+
+    pub fn transport_endpoint(&self, id: &DeviceId) -> Option<SocketAddr> {
+        self.transport_endpoints.get(id).copied()
     }
 
     pub fn is_paired(&self, id: &DeviceId) -> bool {
@@ -256,18 +270,26 @@ mod tests {
     }
 
     #[test]
-    fn discovered_endpoint_is_recorded_and_removed_with_pairing() {
+    fn discovered_endpoints_are_separated_and_removed_with_pairing() {
         let mut registry = PeerRegistry::new();
-        let device = DeviceInfo::new_local("MacBook", 45731);
+        let device = DeviceInfo::new_local("MacBook", 46001);
         let device_id = device.id.clone();
-        let endpoint: SocketAddr = "192.0.2.10:45731".parse().unwrap();
+        let source: SocketAddr = "192.0.2.10:54321".parse().unwrap();
 
-        registry.mark_discovered_at(device, endpoint);
+        registry.mark_discovered_at(device, source);
 
-        assert_eq!(registry.endpoint(&device_id), Some(endpoint));
+        assert_eq!(
+            registry.discovery_endpoint(&device_id),
+            Some("192.0.2.10:45731".parse().unwrap())
+        );
+        assert_eq!(
+            registry.transport_endpoint(&device_id),
+            Some("192.0.2.10:46001".parse().unwrap())
+        );
 
         registry.remove_pairing(&device_id);
 
-        assert_eq!(registry.endpoint(&device_id), None);
+        assert_eq!(registry.discovery_endpoint(&device_id), None);
+        assert_eq!(registry.transport_endpoint(&device_id), None);
     }
 }

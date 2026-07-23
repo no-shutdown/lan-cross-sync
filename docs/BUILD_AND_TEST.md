@@ -54,6 +54,8 @@ pnpm tauri dev
 
 Tauri 会启动 Vite 开发服务器并打开桌面窗口，默认开发地址是 `http://localhost:1420`。结束调试时先关闭窗口，再在终端按 `Ctrl+C`，避免 Cargo 或 Vite 进程继续占用端口和构建文件。
 
+应用启动后，窗口顶部的网络状态会显示固定的 UDP 发现端口和实际 TCP 传输端口。UDP 发现端口为 `45731`；TCP 默认优先使用设置中的端口，如果被其他程序占用，会自动切换到空闲端口并继续广播实际传输端口。只有 UDP 和 TCP 都绑定成功时才会广播本机设备。
+
 启动后建议先验证本机行为：
 
 1. 未配对、没有在线同步目标时，复制和粘贴不应被应用读取、发送或回写。
@@ -84,7 +86,7 @@ Windows PowerShell 可以执行：
 
 ```powershell
 $cargo = "$env:USERPROFILE\.cargo\bin\cargo.exe"
-& $cargo fmt --all -- --check
+& $cargo fmt --manifest-path src-tauri\Cargo.toml --all -- --check
 & $cargo check --manifest-path src-tauri\Cargo.toml
 & $cargo test --manifest-path src-tauri\Cargo.toml
 pnpm build

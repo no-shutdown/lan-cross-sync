@@ -7,6 +7,7 @@ use std::path::Path;
 use std::{fs, path::PathBuf};
 
 pub const DEFAULT_DISCOVERY_PORT: u16 = 45731;
+pub const DEFAULT_TRANSPORT_PORT: u16 = 45731;
 
 #[derive(Clone, Debug)]
 pub struct SettingsStore {
@@ -29,7 +30,7 @@ impl SettingsStore {
         }
 
         let settings = LocalSettings {
-            local_device: DeviceInfo::new_local(device_name, DEFAULT_DISCOVERY_PORT),
+            local_device: DeviceInfo::new_local(device_name, DEFAULT_TRANSPORT_PORT),
             paired_peers: Vec::new(),
             ui_locale: default_ui_locale(),
         };

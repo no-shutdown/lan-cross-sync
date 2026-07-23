@@ -24,6 +24,12 @@ pub fn discovery_socket_addr(port: u16) -> SocketAddrV4 {
     SocketAddrV4::new(DISCOVERY_BROADCAST_ADDR, port)
 }
 
+pub async fn bind_discovery_socket(port: u16) -> Result<UdpSocket> {
+    UdpSocket::bind(("0.0.0.0", port))
+        .await
+        .with_context(|| format!("failed to bind discovery UDP listener on port {port}"))
+}
+
 pub fn encode_discovery(device: DeviceInfo) -> Result<Vec<u8>> {
     let message = LanMessage::Discovery(DiscoveryPacket::new(device));
     encode_message(&message).context("failed to encode discovery packet")
@@ -80,10 +86,10 @@ pub async fn announce_loop(device: DeviceInfo, port: u16) -> Result<()> {
     }
 }
 
-pub async fn receive_loop_with_pairing(port: u16, pairing: Arc<PairingRuntime>) -> Result<()> {
-    let socket = UdpSocket::bind(("0.0.0.0", port))
-        .await
-        .with_context(|| format!("failed to bind discovery UDP listener on port {port}"))?;
+pub async fn receive_loop_with_pairing(
+    socket: UdpSocket,
+    pairing: Arc<PairingRuntime>,
+) -> Result<()> {
     let mut buffer = vec![0_u8; 64 * 1024];
 
     loop {
@@ -317,6 +323,17 @@ mod tests {
     }
 
     #[test]
+    fn discovery_packet_advertises_the_actual_tcp_transport_port() {
+        let device = DeviceInfo::new_local("Windows Desk", 46001);
+
+        let decoded = decode_discovery(&encode_discovery(device).unwrap())
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decoded.port, 46001);
+    }
+
+    #[test]
     fn broadcast_address_uses_selected_port() {
         let addr = discovery_socket_addr(45731);
 
@@ -393,18 +410,25 @@ mod tests {
     }
 
     #[test]
-    fn apply_discovery_packet_at_records_source_endpoint() {
+    fn apply_discovery_packet_at_records_separate_endpoints() {
         let local = DeviceInfo::new_local("Windows Desk", 45731);
-        let remote = DeviceInfo::new_local("MacBook", 45731);
+        let remote = DeviceInfo::new_local("MacBook", 46001);
         let encoded = encode_discovery(remote.clone()).unwrap();
-        let source: SocketAddr = "192.0.2.20:45731".parse().unwrap();
+        let source: SocketAddr = "192.0.2.20:54321".parse().unwrap();
         let mut registry = PeerRegistry::new();
 
         let applied =
             apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
 
         assert!(applied);
-        assert_eq!(registry.endpoint(&remote.id), Some(source));
+        assert_eq!(
+            registry.discovery_endpoint(&remote.id),
+            Some("192.0.2.20:45731".parse().unwrap())
+        );
+        assert_eq!(
+            registry.transport_endpoint(&remote.id),
+            Some("192.0.2.20:46001".parse().unwrap())
+        );
     }
 
     #[test]

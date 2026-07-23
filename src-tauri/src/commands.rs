@@ -6,16 +6,16 @@ use crate::{
     settings::SettingsStore,
 };
 use serde::Serialize;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_autostart::ManagerExt;
 
 pub struct AppState {
     pub settings_store: SettingsStore,
-    pub settings: Mutex<LocalSettings>,
-    pub registry: Mutex<PeerRegistry>,
-    pub active_pairing: Mutex<Option<PairingSession>>,
+    pub settings: Arc<Mutex<LocalSettings>>,
+    pub registry: Arc<Mutex<PeerRegistry>>,
+    pub active_pairing: Arc<Mutex<Option<PairingSession>>>,
 }
 
 #[derive(Clone, Debug, Serialize)]

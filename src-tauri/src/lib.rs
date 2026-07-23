@@ -13,7 +13,7 @@ use commands::{
 };
 use registry::PeerRegistry;
 use settings::SettingsStore;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -45,17 +45,35 @@ pub fn run() {
             let registry = PeerRegistry::from_paired(settings.paired_peers.clone());
             let discovery_device = settings.local_device.clone();
             let discovery_port = discovery_device.port;
+            let settings = Arc::new(Mutex::new(settings));
+            let registry = Arc::new(Mutex::new(registry));
+            let active_pairing = Arc::new(Mutex::new(None));
 
             app.manage(AppState {
                 settings_store,
-                settings: Mutex::new(settings),
-                registry: Mutex::new(registry),
-                active_pairing: Mutex::new(None),
+                settings: settings.clone(),
+                registry: registry.clone(),
+                active_pairing,
             });
 
             tauri::async_runtime::spawn(async move {
                 if let Err(err) = discovery::announce_loop(discovery_device, discovery_port).await {
                     tracing::error!(?err, "LAN discovery announcer stopped");
+                }
+            });
+            let receive_device_id = settings
+                .lock()
+                .expect("settings lock poisoned during startup")
+                .local_device
+                .id
+                .clone();
+            let receive_registry = registry.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) =
+                    discovery::receive_loop(receive_device_id, discovery_port, receive_registry)
+                        .await
+                {
+                    tracing::error!(?err, "LAN discovery receiver stopped");
                 }
             });
 

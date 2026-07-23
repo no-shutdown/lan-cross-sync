@@ -1,9 +1,13 @@
 use crate::{
-    domain::DeviceInfo,
+    domain::{DeviceId, DeviceInfo},
     protocol::{decode_message, encode_message, DiscoveryPacket, LanMessage, PROTOCOL_VERSION},
+    registry::PeerRegistry,
 };
 use anyhow::{Context, Result};
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    sync::{Arc, Mutex},
+};
 use tokio::{
     net::UdpSocket,
     time::{self, Duration},
@@ -34,6 +38,23 @@ pub fn decode_discovery(bytes: &[u8]) -> Result<Option<DeviceInfo>> {
     }
 }
 
+pub fn apply_discovery_packet(
+    bytes: &[u8],
+    local_device_id: &DeviceId,
+    registry: &mut PeerRegistry,
+) -> Result<bool> {
+    let Some(device) = decode_discovery(bytes)? else {
+        return Ok(false);
+    };
+
+    if device.id == *local_device_id {
+        return Ok(false);
+    }
+
+    registry.mark_discovered(device);
+    Ok(true)
+}
+
 pub async fn announce_loop(device: DeviceInfo, port: u16) -> Result<()> {
     let socket = UdpSocket::bind(("0.0.0.0", 0))
         .await
@@ -54,9 +75,41 @@ pub async fn announce_loop(device: DeviceInfo, port: u16) -> Result<()> {
     }
 }
 
+pub async fn receive_loop(
+    local_device_id: DeviceId,
+    port: u16,
+    registry: Arc<Mutex<PeerRegistry>>,
+) -> Result<()> {
+    let socket = UdpSocket::bind(("0.0.0.0", port))
+        .await
+        .with_context(|| format!("failed to bind discovery UDP listener on port {port}"))?;
+    let mut buffer = vec![0_u8; 64 * 1024];
+
+    loop {
+        let (len, source) = socket
+            .recv_from(&mut buffer)
+            .await
+            .context("failed to receive discovery UDP packet")?;
+        let packet = &buffer[..len];
+
+        match registry.lock() {
+            Ok(mut registry) => {
+                if let Err(err) = apply_discovery_packet(packet, &local_device_id, &mut registry) {
+                    tracing::debug!(?err, %source, "ignored invalid discovery packet");
+                }
+            }
+            Err(err) => {
+                tracing::error!(?err, "discovery registry lock poisoned");
+                return Ok(());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{PairedPeer, PeerConnectionState};
 
     #[test]
     fn discovery_packet_round_trips_to_device_info() {
@@ -110,5 +163,49 @@ mod tests {
         let decoded = decode_discovery(&encoded).unwrap();
 
         assert_eq!(decoded, None);
+    }
+
+    #[test]
+    fn apply_discovery_packet_adds_remote_device() {
+        let local = DeviceInfo::new_local("Windows Desk", 45731);
+        let remote = DeviceInfo::new_local("MacBook", 45731);
+        let encoded = encode_discovery(remote.clone()).unwrap();
+        let mut registry = PeerRegistry::new();
+
+        let applied = apply_discovery_packet(&encoded, &local.id, &mut registry).unwrap();
+
+        assert!(applied);
+        assert_eq!(registry.discovered(), vec![remote]);
+    }
+
+    #[test]
+    fn apply_discovery_packet_ignores_local_device() {
+        let local = DeviceInfo::new_local("Windows Desk", 45731);
+        let encoded = encode_discovery(local.clone()).unwrap();
+        let mut registry = PeerRegistry::new();
+
+        let applied = apply_discovery_packet(&encoded, &local.id, &mut registry).unwrap();
+
+        assert!(!applied);
+        assert!(registry.discovered().is_empty());
+    }
+
+    #[test]
+    fn apply_discovery_packet_updates_paired_device_state() {
+        let local = DeviceInfo::new_local("Windows Desk", 45731);
+        let remote = DeviceInfo::new_local("MacBook", 45731);
+        let encoded = encode_discovery(remote.clone()).unwrap();
+        let mut registry = PeerRegistry::from_paired(vec![PairedPeer {
+            device: remote,
+            receive_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Offline,
+        }]);
+
+        let applied = apply_discovery_packet(&encoded, &local.id, &mut registry).unwrap();
+
+        assert!(applied);
+        assert!(registry.discovered().is_empty());
+        assert_eq!(registry.paired()[0].state, PeerConnectionState::Discovered);
     }
 }

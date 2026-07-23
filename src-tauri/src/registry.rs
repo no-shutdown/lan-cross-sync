@@ -81,6 +81,10 @@ impl PeerRegistry {
         self.endpoints.get(id).copied()
     }
 
+    pub fn is_paired(&self, id: &DeviceId) -> bool {
+        self.paired.contains_key(id)
+    }
+
     pub fn device(&self, id: &DeviceId) -> Option<DeviceInfo> {
         self.paired
             .get(id)

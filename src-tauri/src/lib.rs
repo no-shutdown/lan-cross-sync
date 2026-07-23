@@ -6,6 +6,7 @@ mod pairing;
 mod protocol;
 mod registry;
 mod settings;
+mod transport;
 
 use commands::{
     cancel_pairing, clear_pairing, get_autostart_enabled, get_dashboard_state, request_pairing,
@@ -20,6 +21,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
+use transport::{TransportEvent, TransportRuntime};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_ID: &str = "lan-cross-sync";
@@ -49,6 +51,9 @@ pub fn run() {
             let settings = Arc::new(Mutex::new(settings));
             let registry = Arc::new(Mutex::new(registry));
             let active_pairing = Arc::new(Mutex::new(None));
+            let (transport_runtime, mut transport_events) =
+                TransportRuntime::new(discovery_device.clone(), registry.clone());
+            let transport = Arc::new(transport_runtime);
             let pairing = Arc::new(PairingRuntime::new(
                 discovery_device.clone(),
                 settings.clone(),
@@ -63,6 +68,7 @@ pub fn run() {
                 registry: registry.clone(),
                 active_pairing: active_pairing.clone(),
                 pairing: pairing.clone(),
+                transport: transport.clone(),
             });
 
             tauri::async_runtime::spawn(async move {
@@ -76,6 +82,36 @@ pub fn run() {
                     discovery::receive_loop_with_pairing(discovery_port, receive_pairing).await
                 {
                     tracing::error!(?err, "LAN discovery receiver stopped");
+                }
+            });
+
+            let listen_transport = (*transport).clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = listen_transport.listen_loop(discovery_port).await {
+                    tracing::error!(?err, "TCP transport listener stopped");
+                }
+            });
+
+            let maintain_transport = (*transport).clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = maintain_transport.maintain_connections().await {
+                    tracing::error!(?err, "TCP reconnect loop stopped");
+                }
+            });
+
+            tauri::async_runtime::spawn(async move {
+                while let Some(event) = transport_events.recv().await {
+                    match event {
+                        TransportEvent::PeerConnected(peer) => {
+                            tracing::debug!(device_id = ?peer.id, "peer transport connected");
+                        }
+                        TransportEvent::PeerDisconnected { peer, reason_code } => {
+                            tracing::debug!(device_id = ?peer.id, %reason_code, "peer transport disconnected");
+                        }
+                        TransportEvent::Message { peer, .. } => {
+                            tracing::debug!(device_id = ?peer.id, "received transport control message");
+                        }
+                    }
                 }
             });
 

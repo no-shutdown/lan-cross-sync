@@ -5,6 +5,7 @@ use crate::{
     protocol::{encode_message, LanMessage, PairingRequest, PROTOCOL_VERSION},
     registry::PeerRegistry,
     settings::SettingsStore,
+    transport::TransportRuntime,
 };
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
@@ -20,6 +21,7 @@ pub struct AppState {
     pub registry: Arc<Mutex<PeerRegistry>>,
     pub active_pairing: Arc<Mutex<Option<PairingSession>>>,
     pub pairing: Arc<PairingRuntime>,
+    pub transport: Arc<TransportRuntime>,
 }
 
 #[derive(Clone, Debug, Serialize)]

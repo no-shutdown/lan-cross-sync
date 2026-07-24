@@ -668,7 +668,9 @@ export function DropPanel() {
         </select>
         <div className={`overlay-dropzone ${dragOver ? 'overlay-dropzone-active' : ''}`}>
           <span className="overlay-drop-icon">📂</span>
-          <span className="overlay-drop-label">{t(locale, 'dropTitle')}</span>
+          <span className="overlay-drop-label">
+            {dragOver ? (locale === 'en-US' ? 'Release to send' : '松手即发送') : t(locale, 'dropTitle')}
+          </span>
         </div>
         {error && <div className="overlay-error">{error}</div>}
       </section>

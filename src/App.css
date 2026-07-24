@@ -772,52 +772,48 @@ button:focus-visible {
 }
 
 .overlay-select {
-  background: rgba(15, 23, 42, 0.74);
-  border: 1px solid rgba(148, 163, 184, 0.32);
-  border-radius: 9px;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
   box-sizing: border-box;
-  color: #f1f5f9;
+  color: var(--color-text);
   cursor: pointer;
-  font-size: 12px;
-  margin-bottom: 9px;
-  outline: none;
-  padding: 7px 9px;
-  position: relative;
+  font-size: 11px;
+  margin-bottom: 8px;
+  min-height: 0;
+  padding: 5px 9px;
   width: 100%;
-  z-index: 1;
-}
-
-.overlay-select:focus {
-  border-color: #a5b4fc;
-  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.16);
 }
 
 .overlay-dropzone {
   align-items: center;
-  background: rgba(15, 23, 42, 0.3);
-  border: 1.5px dashed rgba(148, 163, 184, 0.5);
-  border-radius: 12px;
+  background: var(--color-surface-muted);
+  border: 1.5px dashed var(--color-border);
+  border-radius: 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
   justify-content: center;
-  min-height: 78px;
-  padding: 10px 8px;
-  position: relative;
+  min-height: 76px;
+  padding: 16px 8px;
   text-align: center;
-  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
-  z-index: 1;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
 }
 
 .overlay-dropzone.overlay-dropzone-active {
-  background: rgba(99, 102, 241, 0.16);
-  border-color: #a5b4fc;
-  transform: scale(1.015);
+  background: var(--color-accent-bg);
+  border-color: var(--color-accent);
+  border-style: solid;
+  border-width: 2px;
+}
+
+.overlay-dropzone.overlay-dropzone-active .overlay-drop-label {
+  color: var(--color-accent);
+  font-weight: 700;
 }
 
 .overlay-drop-icon {
-  filter: drop-shadow(0 2px 5px rgba(2, 6, 23, 0.45));
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1;
 }
 

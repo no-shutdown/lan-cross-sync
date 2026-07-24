@@ -41,6 +41,7 @@ import {
   handlePositionFromPanel,
   panelPositionFromHandle,
   type OverlayDropPayload,
+  type OverlayEdge,
 } from './lib/overlay'
 import type {
   DashboardState,
@@ -106,6 +107,23 @@ function initialHandlePosition(): OverlayPosition {
   }
 }
 
+function chevronForEdge(edge: OverlayEdge) {
+  if (edge === 'left' || edge === 'right') {
+    const d = edge === 'right' ? 'M6.5 2L2 7l4.5 5' : 'M2.5 2L7 7l-4.5 5'
+    return (
+      <svg width="9" height="14" viewBox="0 0 9 14" fill="none" aria-hidden="true" style={{ opacity: 0.75 }}>
+        <path d={d} stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    )
+  }
+  const d = edge === 'bottom' ? 'M2 6.5L7 2l5 4.5' : 'M2 2.5L7 7l5-4.5'
+  return (
+    <svg width="14" height="9" viewBox="0 0 14 9" fill="none" aria-hidden="true" style={{ opacity: 0.75 }}>
+      <path d={d} stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function DropHandle() {
   useTransparentOverlayDocument()
 
@@ -121,6 +139,7 @@ export function DropHandle() {
   const suppressHoverUntilRef = useRef(0)
   const windowOperationRef = useRef<Promise<void>>(Promise.resolve())
   const [draggingFile, setDraggingFile] = useState(false)
+  const [handleEdge, _setHandleEdge] = useState<OverlayEdge>('right')
 
   const getPanel = useCallback(async () => {
     if (panelRef.current) return panelRef.current
@@ -392,7 +411,7 @@ export function DropHandle() {
         onPointerDown={startWindowDrag}
         onClick={() => void openPanel()}
       >
-        <span className="overlay-handle-icon" aria-hidden="true">📂</span>
+        {chevronForEdge(handleEdge)}
       </button>
     </div>
   )

@@ -18,6 +18,8 @@ export const OVERLAY_EVENT_DRAG_STOP = 'overlay:drag-stop'
 export const OVERLAY_EVENT_DROP_PATHS = 'overlay:drop-paths'
 export const OVERLAY_EVENT_DROP_COMPLETE = 'overlay:drop-complete'
 
+export type OverlayEdge = 'left' | 'right' | 'top' | 'bottom'
+
 export type OverlayDropPayload = {
   paths: string[]
 }

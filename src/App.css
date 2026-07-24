@@ -720,15 +720,10 @@ button:focus-visible {
   cursor: grabbing;
 }
 
-.overlay-handle-root.overlay-edge-right  .overlay-handle-button { border-radius: 10px 0 0 10px; }
-.overlay-handle-root.overlay-edge-left   .overlay-handle-button { border-radius: 0 10px 10px 0; }
-.overlay-handle-root.overlay-edge-bottom .overlay-handle-button { border-radius: 10px 10px 0 0; }
-.overlay-handle-root.overlay-edge-top    .overlay-handle-button { border-radius: 0 0 10px 10px; }
-
-.overlay-handle-root.overlay-edge-right  .overlay-handle-button { box-shadow: -3px 0 16px rgba(22, 114, 184, 0.38); }
-.overlay-handle-root.overlay-edge-left   .overlay-handle-button { box-shadow:  3px 0 16px rgba(22, 114, 184, 0.38); }
-.overlay-handle-root.overlay-edge-bottom .overlay-handle-button { box-shadow:  0 -3px 16px rgba(22, 114, 184, 0.38); }
-.overlay-handle-root.overlay-edge-top    .overlay-handle-button { box-shadow:  0  3px 16px rgba(22, 114, 184, 0.38); }
+.overlay-handle-root.overlay-edge-right  .overlay-handle-button { border-radius: 10px 0 0 10px; box-shadow: -3px 0 16px rgba(22, 114, 184, 0.38); }
+.overlay-handle-root.overlay-edge-left   .overlay-handle-button { border-radius: 0 10px 10px 0; box-shadow:  3px 0 16px rgba(22, 114, 184, 0.38); }
+.overlay-handle-root.overlay-edge-bottom .overlay-handle-button { border-radius: 10px 10px 0 0; box-shadow:  0 -3px 16px rgba(22, 114, 184, 0.38); }
+.overlay-handle-root.overlay-edge-top    .overlay-handle-button { border-radius: 0 0 10px 10px; box-shadow:  0  3px 16px rgba(22, 114, 184, 0.38); }
 
 @media (prefers-color-scheme: dark) {
   .overlay-handle-root.overlay-edge-right  .overlay-handle-button { box-shadow: -3px 0 16px rgba(78, 161, 224, 0.32); }

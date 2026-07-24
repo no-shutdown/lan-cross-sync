@@ -139,7 +139,6 @@ export function DropHandle() {
   const suppressHoverUntilRef = useRef(0)
   const windowOperationRef = useRef<Promise<void>>(Promise.resolve())
   const [draggingFile, setDraggingFile] = useState(false)
-  const [handleEdge, _setHandleEdge] = useState<OverlayEdge>('right')
 
   const getPanel = useCallback(async () => {
     if (panelRef.current) return panelRef.current
@@ -411,7 +410,7 @@ export function DropHandle() {
         onPointerDown={startWindowDrag}
         onClick={() => void openPanel()}
       >
-        {chevronForEdge(handleEdge)}
+        {chevronForEdge('right')}
       </button>
     </div>
   )

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi'
@@ -45,6 +45,11 @@ export function DropOverlay() {
   const [error, setError] = useState<string | null>(null)
 
   const collapseTimerRef = useRef<number | null>(null)
+  const expandedRef = useRef(false)
+  const pointerInsideRef = useRef(false)
+  const dragOverRef = useRef(false)
+  const windowPositionRef = useRef<{ x: number; y: number } | null>(null)
+  const windowOperationRef = useRef<Promise<void>>(Promise.resolve())
   const selectedTargetRef = useRef<DeviceId | ''>('')
   useEffect(() => { selectedTargetRef.current = selectedTarget }, [selectedTarget])
 
@@ -56,20 +61,71 @@ export function DropOverlay() {
 
   // 让 html/body 透明，使 Tauri transparent 窗口背景露出
   useEffect(() => {
-    document.documentElement.style.background = 'transparent'
-    document.body.style.background = 'transparent'
+    const html = document.documentElement
+    const body = document.body
+    const previous = {
+      htmlBackground: html.style.background,
+      htmlMinWidth: html.style.minWidth,
+      htmlOverflow: html.style.overflow,
+      bodyBackground: body.style.background,
+      bodyMinWidth: body.style.minWidth,
+      bodyOverflow: body.style.overflow,
+    }
+
+    html.style.background = 'transparent'
+    html.style.minWidth = '0'
+    html.style.overflow = 'hidden'
+    body.style.background = 'transparent'
+    body.style.minWidth = '0'
+    body.style.overflow = 'hidden'
+
+    return () => {
+      html.style.background = previous.htmlBackground
+      html.style.minWidth = previous.htmlMinWidth
+      html.style.overflow = previous.htmlOverflow
+      body.style.background = previous.bodyBackground
+      body.style.minWidth = previous.bodyMinWidth
+      body.style.overflow = previous.bodyOverflow
+    }
   }, [])
 
-  // 定位到右下角，设置鼠标穿透，然后显示窗口
+  // 定位到右下角并显示一个始终可用的投送入口。
+  //
+  // 待机态也必须接收原生拖放事件，否则窗口无法收到 enter 来触发展开。
   useEffect(() => {
     const x = window.screen.availWidth - OVERLAY_IDLE_W
     const y = window.screen.availHeight - OVERLAY_IDLE_H
+    windowPositionRef.current = { x, y }
     async function init() {
       await win.setPosition(new LogicalPosition(x, y))
-      await win.setIgnoreCursorEvents(true)
+      await win.setIgnoreCursorEvents(false)
       await win.show()
     }
-    void init()
+    void init().catch((err) => {
+      console.error('failed to initialize drop overlay window', err)
+    })
+  }, [win])
+
+  const enqueueWindowOperation = useCallback((operation: () => Promise<void>) => {
+    const nextOperation = windowOperationRef.current.then(operation, operation)
+    windowOperationRef.current = nextOperation.catch(() => {})
+    return nextOperation
+  }, [])
+
+  const readWindowPosition = useCallback(async () => {
+    try {
+      const [position, scaleFactor] = await Promise.all([
+        win.outerPosition(),
+        win.scaleFactor(),
+      ])
+      const logicalPosition = position.toLogical(scaleFactor)
+      const currentPosition = { x: logicalPosition.x, y: logicalPosition.y }
+      windowPositionRef.current = currentPosition
+      return currentPosition
+    } catch (err) {
+      console.error('failed to read drop overlay window position', err)
+      return windowPositionRef.current
+    }
   }, [win])
 
   // 每 2s 轮询设备列表
@@ -77,7 +133,9 @@ export function DropOverlay() {
     async function refresh() {
       try {
         setDashboard(await getDashboardState())
-      } catch {}
+      } catch (err) {
+        console.error('failed to refresh drop overlay dashboard', err)
+      }
     }
     void refresh()
     const timer = window.setInterval(refresh, 2000)
@@ -94,29 +152,104 @@ export function DropOverlay() {
     }
   }, [dashboard])
 
-  const expand = useCallback(async () => {
-    const idleX = window.screen.availWidth - OVERLAY_IDLE_W
-    const idleY = window.screen.availHeight - OVERLAY_IDLE_H
-    await win.setIgnoreCursorEvents(false)
-    await win.setSize(new LogicalSize(OVERLAY_ACTIVE_W, OVERLAY_ACTIVE_H))
-    await win.setPosition(new LogicalPosition(idleX - (OVERLAY_ACTIVE_W - OVERLAY_IDLE_W), idleY - (OVERLAY_ACTIVE_H - OVERLAY_IDLE_H)))
-    setActive(true)
-  }, [win])
+  const expand = useCallback(() => {
+    if (expandedRef.current) return Promise.resolve()
+    expandedRef.current = true
 
-  const collapse = useCallback(async () => {
-    setActive(false)
-    setDragOver(false)
-    setError(null)
-    const idleX = window.screen.availWidth - OVERLAY_IDLE_W
-    const idleY = window.screen.availHeight - OVERLAY_IDLE_H
-    await win.setSize(new LogicalSize(OVERLAY_IDLE_W, OVERLAY_IDLE_H))
-    await win.setPosition(new LogicalPosition(idleX, idleY))
-    await win.setIgnoreCursorEvents(true)
+    return enqueueWindowOperation(async () => {
+      try {
+        const idlePosition = await readWindowPosition()
+        if (!idlePosition) {
+          expandedRef.current = false
+          return
+        }
+
+        const activePosition = {
+          x: idlePosition.x - (OVERLAY_ACTIVE_W - OVERLAY_IDLE_W),
+          y: idlePosition.y - (OVERLAY_ACTIVE_H - OVERLAY_IDLE_H),
+        }
+        await win.setIgnoreCursorEvents(false)
+        await win.setSize(new LogicalSize(OVERLAY_ACTIVE_W, OVERLAY_ACTIVE_H))
+        await win.setPosition(new LogicalPosition(activePosition.x, activePosition.y))
+        setActive(true)
+      } catch (err) {
+        expandedRef.current = false
+        console.error('failed to expand drop overlay window', err)
+      }
+    })
+  }, [enqueueWindowOperation, readWindowPosition, win])
+
+  const collapse = useCallback(() => {
+    if (!expandedRef.current) return Promise.resolve()
+    expandedRef.current = false
+
+    return enqueueWindowOperation(async () => {
+      // A new hover or file drag may have requested expansion while this
+      // operation was waiting behind a previous native window update.
+      if (expandedRef.current) return
+
+      try {
+        const activePosition = await readWindowPosition()
+        if (!activePosition) return
+
+        const idlePosition = {
+          x: activePosition.x + (OVERLAY_ACTIVE_W - OVERLAY_IDLE_W),
+          y: activePosition.y + (OVERLAY_ACTIVE_H - OVERLAY_IDLE_H),
+        }
+        await win.setSize(new LogicalSize(OVERLAY_IDLE_W, OVERLAY_IDLE_H))
+        await win.setPosition(new LogicalPosition(idlePosition.x, idlePosition.y))
+        // Keep the idle hotspot as a native drop target for the next drag.
+        await win.setIgnoreCursorEvents(false)
+        windowPositionRef.current = idlePosition
+        setActive(false)
+        setDragOver(false)
+        setError(null)
+      } catch (err) {
+        console.error('failed to collapse drop overlay window', err)
+      }
+    })
+  }, [enqueueWindowOperation, readWindowPosition, win])
+
+  const clearCollapseTimer = useCallback(() => {
+    if (collapseTimerRef.current !== null) {
+      window.clearTimeout(collapseTimerRef.current)
+      collapseTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleCollapse = useCallback((delay = 280) => {
+    clearCollapseTimer()
+    if (!expandedRef.current) return
+
+    collapseTimerRef.current = window.setTimeout(() => {
+      collapseTimerRef.current = null
+      if (!pointerInsideRef.current && !dragOverRef.current) {
+        void collapse()
+      }
+    }, delay)
+  }, [clearCollapseTimer, collapse])
+
+  const handlePointerEnter = useCallback(() => {
+    pointerInsideRef.current = true
+    clearCollapseTimer()
+    if (!expandedRef.current) void expand()
+  }, [clearCollapseTimer, expand])
+
+  const handlePointerLeave = useCallback(() => {
+    pointerInsideRef.current = false
+    if (!dragOverRef.current) scheduleCollapse()
+  }, [scheduleCollapse])
+
+  const startWindowDrag = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    void win.startDragging().catch((err) => {
+      console.error('failed to drag drop overlay window', err)
+    })
   }, [win])
 
   // 注册拖放事件监听，只注册一次
   useEffect(() => {
-    let isExpanded = false
     let disposed = false
     let unlisten: (() => void) | undefined
 
@@ -124,27 +257,20 @@ export function DropOverlay() {
       try {
         const handler = await win.onDragDropEvent(async (event) => {
           if (event.payload.type === 'enter') {
-            if (collapseTimerRef.current !== null) {
-              window.clearTimeout(collapseTimerRef.current)
-              collapseTimerRef.current = null
-            }
-            if (!isExpanded) {
-              isExpanded = true
-              await expand()
-            }
+            clearCollapseTimer()
+            dragOverRef.current = true
+            await expand()
             setDragOver(true)
           }
 
           if (event.payload.type === 'leave') {
+            dragOverRef.current = false
             setDragOver(false)
-            collapseTimerRef.current = window.setTimeout(async () => {
-              collapseTimerRef.current = null
-              isExpanded = false
-              await collapse()
-            }, 300)
+            if (!pointerInsideRef.current) scheduleCollapse(320)
           }
 
           if (event.payload.type === 'drop') {
+            dragOverRef.current = false
             setDragOver(false)
             const { paths } = event.payload
             if (paths.length > 0) {
@@ -158,11 +284,7 @@ export function DropOverlay() {
                 }
               }
             }
-            collapseTimerRef.current = window.setTimeout(async () => {
-              collapseTimerRef.current = null
-              isExpanded = false
-              await collapse()
-            }, 500)
+            if (!pointerInsideRef.current) scheduleCollapse(500)
           }
         })
         if (disposed) {
@@ -170,23 +292,50 @@ export function DropOverlay() {
         } else {
           unlisten = handler
         }
-      } catch {}
+      } catch (err) {
+        console.error('failed to register drop overlay drag-and-drop listener', err)
+      }
     })()
 
     return () => {
       disposed = true
-      if (collapseTimerRef.current !== null) window.clearTimeout(collapseTimerRef.current)
+      clearCollapseTimer()
       unlisten?.()
     }
-  }, [win, expand, collapse])
+  }, [clearCollapseTimer, expand, scheduleCollapse, win])
 
   const onlinePeers = dashboard?.paired_devices.filter((p) => p.state === 'connected') ?? []
 
   return (
-    <div className={`overlay-root ${active ? 'overlay-active' : ''}`}>
+    <div
+      className={`overlay-root ${active ? 'overlay-active' : ''}`}
+      onMouseEnter={handlePointerEnter}
+      onMouseLeave={handlePointerLeave}
+    >
+      {!active && (
+        <button
+          type="button"
+          className={`overlay-hotspot ${dragOver ? 'overlay-hotspot-dragover' : ''}`}
+          aria-label={t(locale, 'dropTitle')}
+          title={t(locale, 'dropTitle')}
+          onMouseEnter={handlePointerEnter}
+          onPointerDown={startWindowDrag}
+          onClick={() => void expand()}
+        >
+          <span className="overlay-hotspot-icon">📂</span>
+          <span className="overlay-hotspot-label">{t(locale, 'dropTitle')}</span>
+        </button>
+      )}
       {active && (
         <div className={`overlay-card ${dragOver ? 'overlay-card-dragover' : ''}`}>
-          <div className="overlay-header">{t(locale, 'targetDevice')}</div>
+          <div
+            className="overlay-header overlay-drag-handle"
+            onPointerDown={startWindowDrag}
+            title={t(locale, 'dropTitle')}
+          >
+            <span>{t(locale, 'targetDevice')}</span>
+            <span className="overlay-drag-grip" aria-hidden="true">⠿</span>
+          </div>
           <select
             className="overlay-select"
             value={selectedTarget}

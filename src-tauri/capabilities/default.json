@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default permissions for LAN Cross Sync",
-  "windows": ["main"],
+  "windows": ["main", "drop-overlay"],
   "permissions": [
     "core:default",
     "opener:default",

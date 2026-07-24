@@ -48,6 +48,10 @@ export function DropOverlay() {
   const selectedTargetRef = useRef<DeviceId | ''>('')
   useEffect(() => { selectedTargetRef.current = selectedTarget }, [selectedTarget])
 
+  const locale = normalizeLocale(dashboard?.settings.ui_locale)
+  const localeRef = useRef<Locale>('zh-CN')
+  useEffect(() => { localeRef.current = locale }, [locale])
+
   const win = useMemo(() => getCurrentWebviewWindow(), [])
 
   // 让 html/body 透明，使 Tauri transparent 窗口背景露出
@@ -145,12 +149,12 @@ export function DropOverlay() {
             const { paths } = event.payload
             if (paths.length > 0) {
               if (!selectedTargetRef.current) {
-                setError('No target device selected')
+                setError(t(localeRef.current, 'noTransferTarget'))
               } else {
                 try {
                   await startFileTransfer(selectedTargetRef.current, paths)
                 } catch (err) {
-                  setError(formatInvokeError(err, 'Transfer failed'))
+                  setError(formatInvokeError(err, t(localeRef.current, 'errorTransfer')))
                 }
               }
             }
@@ -177,7 +181,6 @@ export function DropOverlay() {
   }, [win, expand, collapse])
 
   const onlinePeers = dashboard?.paired_devices.filter((p) => p.state === 'connected') ?? []
-  const locale = normalizeLocale(dashboard?.settings.ui_locale)
 
   return (
     <div className={`overlay-root ${active ? 'overlay-active' : ''}`}>

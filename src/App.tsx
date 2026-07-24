@@ -441,7 +441,7 @@ export function DropHandle() {
 
   return (
     <div
-      className={`overlay-handle-root ${draggingFile ? 'overlay-handle-dragging' : ''}`}
+      className={`overlay-handle-root overlay-edge-${handleEdge} ${draggingFile ? 'overlay-handle-dragging' : ''}`}
       onMouseEnter={handlePointerEnter}
       onMouseLeave={handlePointerLeave}
     >

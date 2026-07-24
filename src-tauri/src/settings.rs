@@ -23,9 +23,13 @@ impl SettingsStore {
         if self.path.exists() {
             let raw = fs::read_to_string(&self.path)
                 .with_context(|| format!("failed to read settings file {}", self.path.display()))?;
-            let settings = serde_json::from_str(&raw).with_context(|| {
+            let mut settings: LocalSettings = serde_json::from_str(&raw).with_context(|| {
                 format!("failed to parse settings file {}", self.path.display())
             })?;
+            if settings.local_device.protocol_version != crate::protocol::PROTOCOL_VERSION {
+                settings.local_device.protocol_version = crate::protocol::PROTOCOL_VERSION;
+                self.save(&settings)?;
+            }
             return Ok(settings);
         }
 
@@ -84,6 +88,40 @@ mod tests {
         assert_eq!(settings, loaded);
         assert_eq!(loaded.local_device.name, "Windows Desk");
         assert!(store.path().exists());
+    }
+
+    #[test]
+    fn load_or_create_migrates_stale_local_device_protocol_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{
+                "local_device": {
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "name": "Windows Desk",
+                    "app_version": "0.1.0",
+                    "protocol_version": 1,
+                    "port": 45731,
+                    "capabilities": ["discovery"]
+                },
+                "paired_peers": []
+            }"#,
+        )
+        .unwrap();
+        let store = SettingsStore::new(path);
+
+        let settings = store.load_or_create("Ignored").unwrap();
+
+        assert_eq!(
+            settings.local_device.protocol_version,
+            crate::protocol::PROTOCOL_VERSION
+        );
+        let reloaded = store.load_or_create("Ignored").unwrap();
+        assert_eq!(
+            reloaded.local_device.protocol_version,
+            crate::protocol::PROTOCOL_VERSION
+        );
     }
 
     #[test]

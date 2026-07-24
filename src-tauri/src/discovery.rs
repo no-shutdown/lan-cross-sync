@@ -74,13 +74,7 @@ pub fn decode_discovery(bytes: &[u8]) -> Result<Option<DeviceInfo>> {
         {
             Ok(Some(packet.device))
         }
-        LanMessage::Discovery(packet) => {
-            eprintln!(
-                "[discovery-debug] version mismatch: packet={} device={} local={PROTOCOL_VERSION}",
-                packet.protocol_version, packet.device.protocol_version
-            );
-            Ok(None)
-        }
+        LanMessage::Discovery(_) => Ok(None),
         _ => Ok(None),
     }
 }
@@ -92,17 +86,10 @@ pub fn apply_discovery_packet_at(
     registry: &mut PeerRegistry,
 ) -> Result<bool> {
     let Some(device) = decode_discovery(bytes)? else {
-        eprintln!("[discovery-debug] not a valid discovery packet from {source}");
         return Ok(false);
     };
 
-    eprintln!(
-        "[discovery-debug] decoded device id={:?} name={} from {source}",
-        device.id, device.name
-    );
-
     if device.id == *local_device_id {
-        eprintln!("[discovery-debug] self-filtered device id={:?}", device.id);
         return Ok(false);
     }
 
@@ -127,8 +114,6 @@ pub async fn announce_loop(device: DeviceInfo, port: u16) -> Result<()> {
     let payload = encode_discovery(device)?;
     let mut interval = time::interval(DISCOVERY_INTERVAL);
 
-    eprintln!("[discovery-debug] announce targets: {targets:?}");
-
     loop {
         interval.tick().await;
         for target in &targets {
@@ -136,7 +121,6 @@ pub async fn announce_loop(device: DeviceInfo, port: u16) -> Result<()> {
                 .send_to(&payload, target)
                 .await
                 .with_context(|| format!("failed to send discovery packet to {target}"))?;
-            eprintln!("[discovery-debug] sent {} bytes to {target}", payload.len());
         }
     }
 }
@@ -173,28 +157,11 @@ async fn handle_lan_message(
     source: SocketAddr,
     pairing: &PairingRuntime,
 ) -> Result<()> {
-    eprintln!(
-        "[discovery-debug] recv {} bytes from {source}, local_id={:?}",
-        bytes.len(),
-        pairing.local_device.id
-    );
     pairing.requests.lock().unwrap().clear_expired();
     {
         let mut registry = pairing.registry.lock().unwrap();
-        match apply_discovery_packet_at(bytes, &pairing.local_device.id, source, &mut registry) {
-            Ok(true) => {
-                eprintln!("[discovery-debug] applied discovery packet from {source}");
-                return Ok(());
-            }
-            Ok(false) => {
-                eprintln!(
-                    "[discovery-debug] discovery packet from {source} was NOT applied (self or non-discovery)"
-                );
-            }
-            Err(err) => {
-                eprintln!("[discovery-debug] failed to apply discovery packet from {source}: {err:?}");
-                return Err(err);
-            }
+        if apply_discovery_packet_at(bytes, &pairing.local_device.id, source, &mut registry)? {
+            return Ok(());
         }
     }
     let message = decode_message(bytes).context("failed to decode LAN message")?;

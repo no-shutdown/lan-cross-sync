@@ -730,7 +730,8 @@ export default function App() {
   }
 
   function onTransferEvent(event: TransferEvent) {
-    setEvents((current) => [event, ...current.filter((item) => item.transfer_id !== event.transfer_id || item.type !== event.type)].slice(0, 12))
+    const terminal = event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled'
+    setEvents((current) => [event, ...current.filter((item) => item.transfer_id !== event.transfer_id || (!terminal && item.type !== event.type))].slice(0, 12))
     if (event.type === 'offer' && event.direction === 'receiving') {
       notifyIncomingTransfer(locale, event)
     }

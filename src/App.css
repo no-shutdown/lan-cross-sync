@@ -458,9 +458,19 @@ button:focus-visible {
   color: var(--color-text-muted);
 }
 
-.peer-actions,
-.pair-input-row {
+.peer-actions {
   align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  justify-content: flex-end;
+}
+
+.pair-input-row {
+  /* The label stacks a caption above the input, so aligning the row to
+     its end (rather than center) puts the button flush with the input
+     itself instead of centered against the caption+input block. */
+  align-items: flex-end;
   display: flex;
   flex-wrap: wrap;
   gap: 9px;
@@ -638,9 +648,5 @@ button:focus-visible {
   .network-endpoints {
     text-align: left;
     width: 100%;
-  }
-
-  .pair-input-row button {
-    align-self: flex-end;
   }
 }

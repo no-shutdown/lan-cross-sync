@@ -677,11 +677,6 @@ button:focus-visible {
     radial-gradient(circle at 30% 18%, rgba(196, 181, 253, 0.95), transparent 30%),
     linear-gradient(145deg, #4f46e5, #312e81 72%);
   border: 1px solid rgba(224, 231, 255, 0.8);
-  border-radius: 50%;
-  box-shadow:
-    0 10px 24px rgba(2, 6, 23, 0.48),
-    0 0 0 4px rgba(99, 102, 241, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22);
   color: #f8fafc;
   cursor: grab;
   display: flex;
@@ -723,6 +718,23 @@ button:focus-visible {
 .overlay-handle-button:active,
 .overlay-drag-handle:active {
   cursor: grabbing;
+}
+
+.overlay-handle-root.overlay-edge-right  .overlay-handle-button { border-radius: 10px 0 0 10px; }
+.overlay-handle-root.overlay-edge-left   .overlay-handle-button { border-radius: 0 10px 10px 0; }
+.overlay-handle-root.overlay-edge-bottom .overlay-handle-button { border-radius: 10px 10px 0 0; }
+.overlay-handle-root.overlay-edge-top    .overlay-handle-button { border-radius: 0 0 10px 10px; }
+
+.overlay-handle-root.overlay-edge-right  .overlay-handle-button { box-shadow: -3px 0 16px rgba(22, 114, 184, 0.38); }
+.overlay-handle-root.overlay-edge-left   .overlay-handle-button { box-shadow:  3px 0 16px rgba(22, 114, 184, 0.38); }
+.overlay-handle-root.overlay-edge-bottom .overlay-handle-button { box-shadow:  0 -3px 16px rgba(22, 114, 184, 0.38); }
+.overlay-handle-root.overlay-edge-top    .overlay-handle-button { box-shadow:  0  3px 16px rgba(22, 114, 184, 0.38); }
+
+@media (prefers-color-scheme: dark) {
+  .overlay-handle-root.overlay-edge-right  .overlay-handle-button { box-shadow: -3px 0 16px rgba(78, 161, 224, 0.32); }
+  .overlay-handle-root.overlay-edge-left   .overlay-handle-button { box-shadow:  3px 0 16px rgba(78, 161, 224, 0.32); }
+  .overlay-handle-root.overlay-edge-bottom .overlay-handle-button { box-shadow:  0 -3px 16px rgba(78, 161, 224, 0.32); }
+  .overlay-handle-root.overlay-edge-top    .overlay-handle-button { box-shadow:  0  3px 16px rgba(78, 161, 224, 0.32); }
 }
 
 .overlay-handle-icon {

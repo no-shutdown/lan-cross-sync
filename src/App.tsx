@@ -252,39 +252,6 @@ export function DropHandle() {
     }
   }, [clearCloseTimer, win])
 
-  const rememberHandlePlacement = useCallback((placement: { x: number; y: number; edge: OverlayEdge }) => {
-    handlePositionRef.current = { x: placement.x, y: placement.y }
-    setHandleEdge(placement.edge)
-  }, [])
-
-  useEffect(() => {
-    let disposed = false
-    let unlisten: (() => void) | undefined
-
-    void (async () => {
-      try {
-        const handler = await win.onMoved(async (event) => {
-          try {
-            const scaleFactor = await win.scaleFactor()
-            const handlePosition = event.payload.toLogical(scaleFactor)
-            rememberHandlePlacement({ x: handlePosition.x, y: handlePosition.y, edge: 'right' })
-          } catch (err) {
-            console.error('failed to remember drop handle placement', err)
-          }
-        })
-        if (disposed) handler()
-        else unlisten = handler
-      } catch (err) {
-        console.error('failed to register drop handle move listener', err)
-      }
-    })()
-
-    return () => {
-      disposed = true
-      unlisten?.()
-    }
-  }, [rememberHandlePlacement, win])
-
   useEffect(() => {
     let disposed = false
     let unlisten: (() => void) | undefined
@@ -428,6 +395,48 @@ export function DropHandle() {
     void win.startDragging().catch((err) => {
       console.error('failed to drag drop handle window', err)
     })
+  }, [win])
+
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+
+    void (async () => {
+      try {
+        const handler = await win.onMoved(async (event) => {
+          try {
+            const scaleFactor = await win.scaleFactor()
+            const pos = event.payload.toLogical(scaleFactor)
+            const screen = window.screen as Screen & { availLeft?: number; availTop?: number }
+            const aLeft = screen.availLeft ?? 0
+            const aTop = screen.availTop ?? 0
+            const aRight = aLeft + screen.availWidth
+            const aBottom = aTop + screen.availHeight
+            const cx = pos.x + OVERLAY_HANDLE_W / 2
+            const cy = pos.y + OVERLAY_HANDLE_H / 2
+            const dl = cx - aLeft
+            const dr = aRight - cx
+            const dt = cy - aTop
+            const db = aBottom - cy
+            const min = Math.min(dl, dr, dt, db)
+            const edge: OverlayEdge = min === dr ? 'right' : min === dl ? 'left' : min === db ? 'bottom' : 'top'
+            setHandleEdge(edge)
+            handlePositionRef.current = { x: pos.x, y: pos.y }
+          } catch (err) {
+            console.error('failed to update handle edge', err)
+          }
+        })
+        if (disposed) handler()
+        else unlisten = handler
+      } catch (err) {
+        console.error('failed to register handle move listener', err)
+      }
+    })()
+
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
   }, [win])
 
   return (

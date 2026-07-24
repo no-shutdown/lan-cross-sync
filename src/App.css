@@ -659,15 +659,24 @@ button:focus-visible {
 
 .overlay-handle-root,
 .overlay-panel-root {
-  align-items: flex-end;
   background: transparent;
   box-sizing: border-box;
   display: flex;
   height: 100vh;
-  justify-content: flex-end;
-  overflow: hidden;
   pointer-events: auto;
   width: 100vw;
+}
+
+.overlay-handle-root {
+  align-items: flex-end;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+.overlay-panel-root {
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 8px;
 }
 
 .overlay-handle-button {

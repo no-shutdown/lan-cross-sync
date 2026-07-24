@@ -32,12 +32,12 @@ import type {
   TransferEvent,
 } from './lib/types'
 
-export function DropOverlay() {
-  const IDLE_W = 80
-  const IDLE_H = 80
-  const ACTIVE_W = 220
-  const ACTIVE_H = 180
+const OVERLAY_IDLE_W = 80
+const OVERLAY_IDLE_H = 80
+const OVERLAY_ACTIVE_W = 220
+const OVERLAY_ACTIVE_H = 180
 
+export function DropOverlay() {
   const [active, setActive] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [dashboard, setDashboard] = useState<DashboardState | null>(null)
@@ -58,8 +58,8 @@ export function DropOverlay() {
 
   // 定位到右下角，设置鼠标穿透，然后显示窗口
   useEffect(() => {
-    const x = window.screen.availWidth - IDLE_W
-    const y = window.screen.availHeight - IDLE_H
+    const x = window.screen.availWidth - OVERLAY_IDLE_W
+    const y = window.screen.availHeight - OVERLAY_IDLE_H
     async function init() {
       await win.setPosition(new LogicalPosition(x, y))
       await win.setIgnoreCursorEvents(true)
@@ -91,11 +91,11 @@ export function DropOverlay() {
   }, [dashboard])
 
   const expand = useCallback(async () => {
-    const idleX = window.screen.availWidth - IDLE_W
-    const idleY = window.screen.availHeight - IDLE_H
+    const idleX = window.screen.availWidth - OVERLAY_IDLE_W
+    const idleY = window.screen.availHeight - OVERLAY_IDLE_H
     await win.setIgnoreCursorEvents(false)
-    await win.setSize(new LogicalSize(ACTIVE_W, ACTIVE_H))
-    await win.setPosition(new LogicalPosition(idleX - (ACTIVE_W - IDLE_W), idleY - (ACTIVE_H - IDLE_H)))
+    await win.setSize(new LogicalSize(OVERLAY_ACTIVE_W, OVERLAY_ACTIVE_H))
+    await win.setPosition(new LogicalPosition(idleX - (OVERLAY_ACTIVE_W - OVERLAY_IDLE_W), idleY - (OVERLAY_ACTIVE_H - OVERLAY_IDLE_H)))
     setActive(true)
   }, [win])
 
@@ -103,9 +103,9 @@ export function DropOverlay() {
     setActive(false)
     setDragOver(false)
     setError(null)
-    const idleX = window.screen.availWidth - IDLE_W
-    const idleY = window.screen.availHeight - IDLE_H
-    await win.setSize(new LogicalSize(IDLE_W, IDLE_H))
+    const idleX = window.screen.availWidth - OVERLAY_IDLE_W
+    const idleY = window.screen.availHeight - OVERLAY_IDLE_H
+    await win.setSize(new LogicalSize(OVERLAY_IDLE_W, OVERLAY_IDLE_H))
     await win.setPosition(new LogicalPosition(idleX, idleY))
     await win.setIgnoreCursorEvents(true)
   }, [win])
@@ -113,11 +113,12 @@ export function DropOverlay() {
   // 注册拖放事件监听，只注册一次
   useEffect(() => {
     let isExpanded = false
+    let disposed = false
     let unlisten: (() => void) | undefined
 
     void (async () => {
       try {
-        unlisten = await win.onDragDropEvent(async (event) => {
+        const handler = await win.onDragDropEvent(async (event) => {
           if (event.payload.type === 'enter') {
             if (collapseTimerRef.current !== null) {
               window.clearTimeout(collapseTimerRef.current)
@@ -142,11 +143,15 @@ export function DropOverlay() {
           if (event.payload.type === 'drop') {
             setDragOver(false)
             const { paths } = event.payload
-            if (paths.length > 0 && selectedTargetRef.current) {
-              try {
-                await startFileTransfer(selectedTargetRef.current, paths)
-              } catch (err) {
-                setError(formatInvokeError(err, 'Transfer failed'))
+            if (paths.length > 0) {
+              if (!selectedTargetRef.current) {
+                setError('No target device selected')
+              } else {
+                try {
+                  await startFileTransfer(selectedTargetRef.current, paths)
+                } catch (err) {
+                  setError(formatInvokeError(err, 'Transfer failed'))
+                }
               }
             }
             collapseTimerRef.current = window.setTimeout(async () => {
@@ -156,10 +161,16 @@ export function DropOverlay() {
             }, 500)
           }
         })
+        if (disposed) {
+          handler()
+        } else {
+          unlisten = handler
+        }
       } catch {}
     })()
 
     return () => {
+      disposed = true
       if (collapseTimerRef.current !== null) window.clearTimeout(collapseTimerRef.current)
       unlisten?.()
     }

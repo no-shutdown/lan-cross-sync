@@ -734,7 +734,7 @@ button:focus-visible {
 }
 
 .overlay-panel-root.overlay-panel-dragging .overlay-card {
-  box-shadow: 0 4px 24px rgba(24, 34, 45, 0.12), 0 0 0 3px rgba(22, 114, 184, 0.15);
+  box-shadow: 0 4px 24px rgba(24, 34, 45, 0.12), 0 1px 4px rgba(24, 34, 45, 0.06), 0 0 0 3px rgba(22, 114, 184, 0.15);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -743,7 +743,7 @@ button:focus-visible {
   }
 
   .overlay-panel-root.overlay-panel-dragging .overlay-card {
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.42), 0 0 0 3px rgba(78, 161, 224, 0.20);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.42), 0 1px 4px rgba(0, 0, 0, 0.22), 0 0 0 3px rgba(78, 161, 224, 0.20);
   }
 }
 
@@ -756,9 +756,7 @@ button:focus-visible {
   justify-content: space-between;
   letter-spacing: 0.07em;
   margin-bottom: 9px;
-  position: relative;
   text-transform: uppercase;
-  z-index: 1;
 }
 
 .overlay-drag-handle {

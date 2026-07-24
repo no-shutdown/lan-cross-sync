@@ -797,7 +797,7 @@ button:focus-visible {
   min-height: 76px;
   padding: 16px 8px;
   text-align: center;
-  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+  transition: border 160ms ease, background 160ms ease, color 160ms ease;
 }
 
 .overlay-dropzone.overlay-dropzone-active {

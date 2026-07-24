@@ -526,6 +526,10 @@ button:focus-visible {
   min-width: 250px;
 }
 
+.target-select select:invalid {
+  color: var(--color-text-faint);
+}
+
 .drop-zone {
   align-items: center;
   border: 1px dashed var(--color-text-faint);

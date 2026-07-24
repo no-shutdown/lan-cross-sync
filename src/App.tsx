@@ -415,8 +415,12 @@ function TransferPanel({
         </div>
         <label className="target-select">
           <span>{t(locale, 'targetDevice')}</span>
-          <select value={targetId} onChange={(event) => setSelectedTarget(event.target.value)}>
-            <option value="">{t(locale, 'chooseTarget')}</option>
+          <select value={targetId} onChange={(event) => setSelectedTarget(event.target.value)} required>
+            {targetId === '' && (
+              <option value="" disabled hidden>
+                {t(locale, 'chooseTarget')}
+              </option>
+            )}
             {onlinePeers.map((peer) => (
               <option key={peer.device.id} value={peer.device.id}>
                 {peer.device.name}

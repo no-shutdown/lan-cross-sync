@@ -166,9 +166,9 @@ export const OVERLAY_HANDLE_LENGTH = 52
 export const OVERLAY_HANDLE_THICKNESS = 20
 ```
 
-`src-tauri/tauri.conf.json` drop-handle window:
+`src-tauri/tauri.conf.json` drop-handle window (startup edge is `'right'`, so THICKNESS=width, LENGTH=height):
 ```json
-"width": 52, "height": 20
+"width": 20, "height": 52
 ```
 
 ---

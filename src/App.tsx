@@ -139,6 +139,7 @@ export function DropHandle() {
   const suppressHoverUntilRef = useRef(0)
   const windowOperationRef = useRef<Promise<void>>(Promise.resolve())
   const [draggingFile, setDraggingFile] = useState(false)
+  const [handleEdge, setHandleEdge] = useState<OverlayEdge>('right')
 
   const getPanel = useCallback(async () => {
     if (panelRef.current) return panelRef.current
@@ -250,6 +251,39 @@ export function DropHandle() {
       clearCloseTimer()
     }
   }, [clearCloseTimer, win])
+
+  const rememberHandlePlacement = useCallback((placement: { x: number; y: number; edge: OverlayEdge }) => {
+    handlePositionRef.current = { x: placement.x, y: placement.y }
+    setHandleEdge(placement.edge)
+  }, [])
+
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+
+    void (async () => {
+      try {
+        const handler = await win.onMoved(async (event) => {
+          try {
+            const scaleFactor = await win.scaleFactor()
+            const handlePosition = event.payload.toLogical(scaleFactor)
+            rememberHandlePlacement({ x: handlePosition.x, y: handlePosition.y, edge: 'right' })
+          } catch (err) {
+            console.error('failed to remember drop handle placement', err)
+          }
+        })
+        if (disposed) handler()
+        else unlisten = handler
+      } catch (err) {
+        console.error('failed to register drop handle move listener', err)
+      }
+    })()
+
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [rememberHandlePlacement, win])
 
   useEffect(() => {
     let disposed = false
@@ -410,7 +444,7 @@ export function DropHandle() {
         onPointerDown={startWindowDrag}
         onClick={() => void openPanel()}
       >
-        {chevronForEdge('right')}
+        {chevronForEdge(handleEdge)}
       </button>
     </div>
   )

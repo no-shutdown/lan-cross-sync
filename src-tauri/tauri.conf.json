@@ -17,6 +17,19 @@
         "height": 600,
         "minWidth": 640,
         "minHeight": 520
+      },
+      {
+        "label": "drop-overlay",
+        "title": "",
+        "width": 80,
+        "height": 80,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false,
+        "resizable": false
       }
     ],
     "security": {

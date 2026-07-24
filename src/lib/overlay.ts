@@ -1,8 +1,12 @@
 export const DROP_HANDLE_LABEL = 'drop-handle'
 export const DROP_PANEL_LABEL = 'drop-panel'
 
-export const OVERLAY_HANDLE_W = 72
-export const OVERLAY_HANDLE_H = 72
+export const OVERLAY_HANDLE_LENGTH = 52
+export const OVERLAY_HANDLE_THICKNESS = 20
+
+// Derived aliases for convenience
+export const OVERLAY_HANDLE_W = OVERLAY_HANDLE_THICKNESS
+export const OVERLAY_HANDLE_H = OVERLAY_HANDLE_LENGTH
 export const OVERLAY_PANEL_W = 248
 export const OVERLAY_PANEL_H = 190
 

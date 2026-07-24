@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi'
 import { open } from '@tauri-apps/plugin-dialog'
 import { isPermissionGranted, onAction, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import './App.css'
@@ -30,6 +31,172 @@ import type {
   PairedPeer,
   TransferEvent,
 } from './lib/types'
+
+export function DropOverlay() {
+  const IDLE_W = 80
+  const IDLE_H = 80
+  const ACTIVE_W = 220
+  const ACTIVE_H = 180
+
+  const [active, setActive] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+  const [dashboard, setDashboard] = useState<DashboardState | null>(null)
+  const [selectedTarget, setSelectedTarget] = useState<DeviceId | ''>('')
+  const [error, setError] = useState<string | null>(null)
+
+  const collapseTimerRef = useRef<number | null>(null)
+  const selectedTargetRef = useRef<DeviceId | ''>('')
+  useEffect(() => { selectedTargetRef.current = selectedTarget }, [selectedTarget])
+
+  const win = useMemo(() => getCurrentWebviewWindow(), [])
+
+  // 让 html/body 透明，使 Tauri transparent 窗口背景露出
+  useEffect(() => {
+    document.documentElement.style.background = 'transparent'
+    document.body.style.background = 'transparent'
+  }, [])
+
+  // 定位到右下角，设置鼠标穿透，然后显示窗口
+  useEffect(() => {
+    const x = window.screen.availWidth - IDLE_W
+    const y = window.screen.availHeight - IDLE_H
+    async function init() {
+      await win.setPosition(new LogicalPosition(x, y))
+      await win.setIgnoreCursorEvents(true)
+      await win.show()
+    }
+    void init()
+  }, [win])
+
+  // 每 2s 轮询设备列表
+  useEffect(() => {
+    async function refresh() {
+      try {
+        setDashboard(await getDashboardState())
+      } catch {}
+    }
+    void refresh()
+    const timer = window.setInterval(refresh, 2000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  // 保持 selectedTarget 指向有效的在线设备
+  useEffect(() => {
+    if (!dashboard) return
+    const onlinePeers = dashboard.paired_devices.filter((p) => p.state === 'connected')
+    if (!onlinePeers.some((p) => p.device.id === selectedTargetRef.current)) {
+      const defaultTarget = onlinePeers.find((p) => p.is_default_file_target)
+      setSelectedTarget(defaultTarget?.device.id ?? onlinePeers[0]?.device.id ?? '')
+    }
+  }, [dashboard])
+
+  const expand = useCallback(async () => {
+    const idleX = window.screen.availWidth - IDLE_W
+    const idleY = window.screen.availHeight - IDLE_H
+    await win.setIgnoreCursorEvents(false)
+    await win.setSize(new LogicalSize(ACTIVE_W, ACTIVE_H))
+    await win.setPosition(new LogicalPosition(idleX - (ACTIVE_W - IDLE_W), idleY - (ACTIVE_H - IDLE_H)))
+    setActive(true)
+  }, [win])
+
+  const collapse = useCallback(async () => {
+    setActive(false)
+    setDragOver(false)
+    setError(null)
+    const idleX = window.screen.availWidth - IDLE_W
+    const idleY = window.screen.availHeight - IDLE_H
+    await win.setSize(new LogicalSize(IDLE_W, IDLE_H))
+    await win.setPosition(new LogicalPosition(idleX, idleY))
+    await win.setIgnoreCursorEvents(true)
+  }, [win])
+
+  // 注册拖放事件监听，只注册一次
+  useEffect(() => {
+    let isExpanded = false
+    let unlisten: (() => void) | undefined
+
+    void (async () => {
+      try {
+        unlisten = await win.onDragDropEvent(async (event) => {
+          if (event.payload.type === 'enter') {
+            if (collapseTimerRef.current !== null) {
+              window.clearTimeout(collapseTimerRef.current)
+              collapseTimerRef.current = null
+            }
+            if (!isExpanded) {
+              isExpanded = true
+              await expand()
+            }
+            setDragOver(true)
+          }
+
+          if (event.payload.type === 'leave') {
+            setDragOver(false)
+            collapseTimerRef.current = window.setTimeout(async () => {
+              collapseTimerRef.current = null
+              isExpanded = false
+              await collapse()
+            }, 300)
+          }
+
+          if (event.payload.type === 'drop') {
+            setDragOver(false)
+            const { paths } = event.payload
+            if (paths.length > 0 && selectedTargetRef.current) {
+              try {
+                await startFileTransfer(selectedTargetRef.current, paths)
+              } catch (err) {
+                setError(formatInvokeError(err, 'Transfer failed'))
+              }
+            }
+            collapseTimerRef.current = window.setTimeout(async () => {
+              collapseTimerRef.current = null
+              isExpanded = false
+              await collapse()
+            }, 500)
+          }
+        })
+      } catch {}
+    })()
+
+    return () => {
+      if (collapseTimerRef.current !== null) window.clearTimeout(collapseTimerRef.current)
+      unlisten?.()
+    }
+  }, [win, expand, collapse])
+
+  const onlinePeers = dashboard?.paired_devices.filter((p) => p.state === 'connected') ?? []
+  const locale = normalizeLocale(dashboard?.settings.ui_locale)
+
+  return (
+    <div className={`overlay-root ${active ? 'overlay-active' : ''}`}>
+      {active && (
+        <div className={`overlay-card ${dragOver ? 'overlay-card-dragover' : ''}`}>
+          <div className="overlay-header">{t(locale, 'targetDevice')}</div>
+          <select
+            className="overlay-select"
+            value={selectedTarget}
+            onChange={(e) => setSelectedTarget(e.target.value as DeviceId)}
+          >
+            {onlinePeers.length === 0 && (
+              <option value="" disabled>{t(locale, 'noTransferTarget')}</option>
+            )}
+            {onlinePeers.map((peer) => (
+              <option key={peer.device.id} value={peer.device.id}>
+                {peer.device.name}
+              </option>
+            ))}
+          </select>
+          <div className={`overlay-dropzone ${dragOver ? 'overlay-dropzone-active' : ''}`}>
+            <span className="overlay-drop-icon">📂</span>
+            <span className="overlay-drop-label">{t(locale, 'dropTitle')}</span>
+          </div>
+          {error && <div className="overlay-error">{error}</div>}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function formatInvokeError(err: unknown, fallback: string): string {
   if (err instanceof Error) return err.message

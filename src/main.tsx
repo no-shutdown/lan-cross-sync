@@ -1,8 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import App from "./App";
-import { DropOverlay } from "./App";
+import App, { DropOverlay } from "./App";
 
 const _windowLabel = getCurrentWebviewWindow().label;
 

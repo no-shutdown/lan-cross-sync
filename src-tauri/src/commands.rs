@@ -271,6 +271,24 @@ pub fn set_receive_clipboard(
 }
 
 #[tauri::command]
+pub fn set_send_clipboard(
+    state: State<'_, AppState>,
+    device_id: DeviceId,
+    enabled: bool,
+) -> AppResult<LocalSettings> {
+    let mut settings = state.settings.lock().unwrap();
+    let next = with_send_clipboard(settings.clone(), device_id, enabled)?;
+    state.settings_store.save(&next)?;
+    *settings = next.clone();
+    state
+        .registry
+        .lock()
+        .unwrap()
+        .sync_preferences(&next.paired_peers);
+    Ok(next)
+}
+
+#[tauri::command]
 pub fn set_default_file_target(
     state: State<'_, AppState>,
     device_id: DeviceId,
@@ -318,6 +336,20 @@ fn with_receive_clipboard(
         .find(|peer| peer.device.id == device_id)
         .ok_or_else(|| AppError::Message("Paired device not found.".to_string()))?;
     peer.receive_clipboard = enabled;
+    Ok(settings)
+}
+
+fn with_send_clipboard(
+    mut settings: LocalSettings,
+    device_id: DeviceId,
+    enabled: bool,
+) -> AppResult<LocalSettings> {
+    let peer = settings
+        .paired_peers
+        .iter_mut()
+        .find(|peer| peer.device.id == device_id)
+        .ok_or_else(|| AppError::Message("Paired device not found.".to_string()))?;
+    peer.send_clipboard = enabled;
     Ok(settings)
 }
 
@@ -380,6 +412,7 @@ mod tests {
         PairedPeer {
             device: DeviceInfo::new_local(name, 45731),
             receive_clipboard: true,
+            send_clipboard: true,
             is_default_file_target,
             state: PeerConnectionState::Connected,
         }
@@ -442,6 +475,28 @@ mod tests {
         let settings = local_settings(vec![paired_peer("MacBook", true)]);
 
         let result = without_pairing(settings, DeviceId::new());
+
+        assert!(matches!(result, Err(AppError::Message(_))));
+    }
+
+    #[test]
+    fn send_clipboard_update_toggles_only_the_matching_peer() {
+        let first = paired_peer("MacBook", true);
+        let second = paired_peer("Linux Desk", false);
+        let target_id = second.device.id.clone();
+        let settings = local_settings(vec![first.clone(), second]);
+
+        let updated = with_send_clipboard(settings, target_id, false).unwrap();
+
+        assert!(updated.paired_peers[0].send_clipboard);
+        assert!(!updated.paired_peers[1].send_clipboard);
+    }
+
+    #[test]
+    fn send_clipboard_update_errors_on_unknown_id() {
+        let settings = local_settings(vec![paired_peer("MacBook", true)]);
+
+        let result = with_send_clipboard(settings, DeviceId::new(), false);
 
         assert!(matches!(result, Err(AppError::Message(_))));
     }

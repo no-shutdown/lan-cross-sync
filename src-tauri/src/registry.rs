@@ -79,6 +79,7 @@ impl PeerRegistry {
         for peer in peers {
             if let Some(current) = self.paired.get_mut(&peer.device.id) {
                 current.receive_clipboard = peer.receive_clipboard;
+                current.send_clipboard = peer.send_clipboard;
                 current.is_default_file_target = peer.is_default_file_target;
             } else {
                 self.set_paired(peer.clone());
@@ -159,6 +160,7 @@ mod tests {
         registry.set_paired(PairedPeer {
             device,
             receive_clipboard: true,
+            send_clipboard: true,
             is_default_file_target: false,
             state: PeerConnectionState::Connected,
         });
@@ -175,6 +177,7 @@ mod tests {
         registry.set_paired(PairedPeer {
             device: device.clone(),
             receive_clipboard: false,
+            send_clipboard: true,
             is_default_file_target: false,
             state: PeerConnectionState::Offline,
         });
@@ -191,6 +194,7 @@ mod tests {
         registry.set_paired(PairedPeer {
             device: device.clone(),
             receive_clipboard: false,
+            send_clipboard: true,
             is_default_file_target: false,
             state: PeerConnectionState::Connected,
         });
@@ -207,6 +211,7 @@ mod tests {
         registry.set_paired(PairedPeer {
             device: device.clone(),
             receive_clipboard: true,
+            send_clipboard: true,
             is_default_file_target: true,
             state: PeerConnectionState::Connected,
         });
@@ -229,12 +234,14 @@ mod tests {
         let first = PairedPeer {
             device: DeviceInfo::new_local("MacBook", 45731),
             receive_clipboard: true,
+            send_clipboard: true,
             is_default_file_target: false,
             state: PeerConnectionState::Connected,
         };
         let second = PairedPeer {
             device: DeviceInfo::new_local("Linux Desk", 45731),
             receive_clipboard: false,
+            send_clipboard: true,
             is_default_file_target: true,
             state: PeerConnectionState::Offline,
         };
@@ -260,6 +267,7 @@ mod tests {
         let mut registry = PeerRegistry::from_paired(vec![PairedPeer {
             device: device.clone(),
             receive_clipboard: true,
+            send_clipboard: true,
             is_default_file_target: false,
             state: PeerConnectionState::Connected,
         }]);
@@ -276,12 +284,14 @@ mod tests {
         let mut peer = PairedPeer {
             device: DeviceInfo::new_local("MacBook", 45731),
             receive_clipboard: false,
+            send_clipboard: true,
             is_default_file_target: false,
             state: PeerConnectionState::Connected,
         };
         let id = peer.device.id.clone();
         let mut registry = PeerRegistry::from_paired(vec![peer.clone()]);
         peer.receive_clipboard = true;
+        peer.send_clipboard = false;
         peer.is_default_file_target = true;
         peer.state = PeerConnectionState::Offline;
 
@@ -291,6 +301,7 @@ mod tests {
         assert_eq!(paired.len(), 1);
         assert_eq!(paired[0].device.id, id);
         assert!(paired[0].receive_clipboard);
+        assert!(!paired[0].send_clipboard);
         assert!(paired[0].is_default_file_target);
         assert_eq!(paired[0].state, PeerConnectionState::Connected);
     }

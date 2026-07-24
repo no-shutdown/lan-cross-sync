@@ -49,6 +49,10 @@ export function setReceiveClipboard(deviceId: DeviceId, enabled: boolean): Promi
   return invoke('set_receive_clipboard', { deviceId, enabled })
 }
 
+export function setSendClipboard(deviceId: DeviceId, enabled: boolean): Promise<LocalSettings> {
+  return invoke('set_send_clipboard', { deviceId, enabled })
+}
+
 export function setDefaultFileTarget(deviceId: DeviceId): Promise<LocalSettings> {
   return invoke('set_default_file_target', { deviceId })
 }

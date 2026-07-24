@@ -14,6 +14,7 @@ export type PeerConnectionState = 'offline' | 'discovered' | 'pairing' | 'connec
 export interface PairedPeer {
   device: DeviceInfo
   receive_clipboard: boolean
+  send_clipboard: boolean
   is_default_file_target: boolean
   state: PeerConnectionState
 }

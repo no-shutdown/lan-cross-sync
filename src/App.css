@@ -1,7 +1,68 @@
 :root {
-  color: #18222d;
-  background: #eef2f5;
+  --color-bg: #eef2f5;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f4f8fb;
+  --color-border: #d7dfe7;
+  --color-border-soft: #e1e7ed;
+  --color-text: #18222d;
+  --color-text-muted: #647282;
+  --color-text-faint: #8793a0;
+  --color-accent: #1672b8;
+  --color-accent-strong: #0f5c94;
+  --color-accent-bg: #f0f7fc;
+  --color-accent-bg-strong: #eef7fc;
+  --color-success: #14683c;
+  --color-success-bg: #e4f4eb;
+  --color-success-border: #b9ddc7;
+  --color-warning-bg: #fffaf0;
+  --color-warning-border: #e4c98a;
+  --color-danger: #a32020;
+  --color-danger-bg: #fff7f7;
+  --color-danger-border: #e0a3a3;
+  --color-neutral-bg: #f1f3f5;
+  --shadow-card: 0 1px 2px rgba(24, 34, 45, 0.04), 0 10px 24px -18px rgba(24, 34, 45, 0.22);
+  --shadow-card-hover: 0 2px 4px rgba(24, 34, 45, 0.06), 0 16px 32px -18px rgba(24, 34, 45, 0.28);
+  color: var(--color-text);
+  background: var(--color-bg);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #12161b;
+    --color-surface: #1b2129;
+    --color-surface-muted: #202834;
+    --color-border: #2c3542;
+    --color-border-soft: #262e3a;
+    --color-text: #e7ecf1;
+    --color-text-muted: #98a5b3;
+    --color-text-faint: #7c8794;
+    --color-accent: #4ea1e0;
+    --color-accent-strong: #6fb6ea;
+    --color-accent-bg: #1c2a35;
+    --color-accent-bg-strong: #1c2a35;
+    --color-success: #5cd394;
+    --color-success-bg: #16281f;
+    --color-success-border: #2c4c3a;
+    --color-warning-bg: #2c2410;
+    --color-warning-border: #5a4a1f;
+    --color-danger: #f0a3a3;
+    --color-danger-bg: #2c1616;
+    --color-danger-border: #5a2a2a;
+    --color-neutral-bg: #212932;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 10px 24px -18px rgba(0, 0, 0, 0.55);
+    --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.28), 0 16px 32px -18px rgba(0, 0, 0, 0.6);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 * {
@@ -22,12 +83,13 @@ select {
 button,
 select,
 input:not([type='checkbox']) {
-  border: 1px solid #c7d0d9;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: #ffffff;
-  color: #18222d;
+  background: var(--color-surface);
+  color: var(--color-text);
   min-height: 38px;
   padding: 8px 11px;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 100ms ease;
 }
 
 button {
@@ -36,20 +98,35 @@ button {
 }
 
 button:hover:not(:disabled) {
-  border-color: #1672b8;
-  background: #f0f7fc;
+  border-color: var(--color-accent);
+  background: var(--color-accent-bg);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 button:disabled {
-  color: #8793a0;
+  color: var(--color-text-faint);
   cursor: default;
   opacity: 0.72;
+}
+
+button.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #ffffff;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
 }
 
 select:focus,
 input:focus,
 button:focus-visible {
-  outline: 3px solid rgba(22, 114, 184, 0.2);
+  outline: 3px solid rgba(78, 161, 224, 0.3);
   outline-offset: 1px;
 }
 
@@ -63,7 +140,25 @@ button:focus-visible {
 .loading-state {
   align-items: center;
   display: flex;
+  flex-direction: column;
+  gap: 14px;
   justify-content: center;
+  color: var(--color-text-muted);
+}
+
+.spinner {
+  animation: spin 800ms linear infinite;
+  border: 3px solid var(--color-border);
+  border-radius: 999px;
+  border-top-color: var(--color-accent);
+  height: 30px;
+  width: 30px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .topbar,
@@ -96,7 +191,7 @@ button:focus-visible {
 }
 
 .eyebrow {
-  color: #1672b8;
+  color: var(--color-accent);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -110,7 +205,7 @@ button:focus-visible {
 .drop-zone span,
 .transfer-offer span,
 .transfer-row > span:last-child {
-  color: #647282;
+  color: var(--color-text-muted);
 }
 
 .device-caption {
@@ -125,7 +220,7 @@ button:focus-visible {
 }
 
 .device-name-row input {
-  border: 1px solid #d7dfe7;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 14px;
   padding: 4px 8px;
@@ -134,11 +229,16 @@ button:focus-visible {
 .link-button {
   background: none;
   border: none;
-  color: #1672b8;
+  color: var(--color-accent);
   cursor: pointer;
   font-size: 12px;
   font-weight: 700;
   padding: 0;
+}
+
+.link-button:hover:not(:disabled) {
+  color: var(--color-accent-strong);
+  text-decoration: underline;
 }
 
 .topbar-actions,
@@ -160,16 +260,17 @@ button:focus-visible {
 .language-select span,
 .target-select span,
 .pair-input-row label span {
-  color: #647282;
+  color: var(--color-text-muted);
   font-size: 12px;
   font-weight: 700;
 }
 
 .panel,
 .error {
-  background: #ffffff;
-  border: 1px solid #d7dfe7;
-  border-radius: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
   margin-bottom: 16px;
   padding: 18px;
 }
@@ -187,15 +288,37 @@ button:focus-visible {
 }
 
 .error {
-  border-color: #e0a3a3;
-  color: #a32020;
+  align-items: flex-start;
+  border-color: var(--color-danger-border);
+  color: var(--color-danger);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.error-dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  min-height: auto;
+  padding: 0 2px;
+}
+
+.error-dismiss:hover {
+  opacity: 0.7;
 }
 
 .network-status {
   align-items: center;
-  background: #ffffff;
-  border: 1px solid #d7dfe7;
-  border-radius: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
   display: flex;
   gap: 18px;
   justify-content: space-between;
@@ -204,18 +327,18 @@ button:focus-visible {
 }
 
 .network-status-ready {
-  background: #f4fbf7;
-  border-color: #b9ddc7;
+  background: var(--color-success-bg);
+  border-color: var(--color-success-border);
 }
 
 .network-status-warning {
-  background: #fffaf0;
-  border-color: #e4c98a;
+  background: var(--color-warning-bg);
+  border-color: var(--color-warning-border);
 }
 
 .network-status-error {
-  background: #fff7f7;
-  border-color: #e0a3a3;
+  background: var(--color-danger-bg);
+  border-color: var(--color-danger-border);
 }
 
 .network-status-copy {
@@ -235,12 +358,12 @@ button:focus-visible {
 }
 
 .network-status p {
-  color: #647282;
+  color: var(--color-text-muted);
   margin: 5px 0 0;
 }
 
 .network-endpoints {
-  color: #4e5d6b;
+  color: var(--color-text-muted);
   display: grid;
   flex: 0 0 auto;
   font-size: 12px;
@@ -249,12 +372,13 @@ button:focus-visible {
 }
 
 .network-endpoints strong {
-  color: #18222d;
+  color: var(--color-text);
 }
 
 .pairing-code {
-  border: 1px dashed #7e8d9d;
-  border-radius: 7px;
+  background: var(--color-surface-muted);
+  border: 1px dashed var(--color-text-faint);
+  border-radius: 8px;
   font-size: clamp(30px, 7vw, 48px);
   font-variant-numeric: tabular-nums;
   font-weight: 750;
@@ -272,9 +396,17 @@ button:focus-visible {
 
 .peer-card {
   align-items: flex-start;
-  border: 1px solid #e1e7ed;
-  border-radius: 7px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 8px;
   padding: 14px;
+  transition: box-shadow 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.peer-card:hover {
+  border-color: var(--color-border);
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-1px);
 }
 
 .peer-details {
@@ -311,19 +443,19 @@ button:focus-visible {
 }
 
 .status-connected {
-  background: #e4f4eb;
-  color: #14683c;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 
 .status-discovered {
-  background: #e8f1f8;
-  color: #1d5e87;
+  background: var(--color-accent-bg);
+  color: var(--color-accent);
 }
 
 .status-offline,
 .status-error {
-  background: #f1f3f5;
-  color: #687584;
+  background: var(--color-neutral-bg);
+  color: var(--color-text-muted);
 }
 
 .peer-actions,
@@ -355,14 +487,18 @@ button:focus-visible {
 }
 
 .check-row input {
-  accent-color: #1672b8;
+  accent-color: var(--color-accent);
   height: 16px;
   width: 16px;
 }
 
 .danger {
-  border-color: #e2b7b7;
-  color: #a32020;
+  border-color: var(--color-danger-border);
+  color: var(--color-danger);
+}
+
+.danger:hover:not(:disabled) {
+  background: var(--color-danger-bg);
 }
 
 .transfer-panel {
@@ -382,8 +518,8 @@ button:focus-visible {
 
 .drop-zone {
   align-items: center;
-  border: 1px dashed #9aa8b6;
-  border-radius: 7px;
+  border: 1px dashed var(--color-text-faint);
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
   gap: 9px;
@@ -392,20 +528,33 @@ button:focus-visible {
   min-height: 150px;
   padding: 22px;
   text-align: center;
-  transition: border-color 120ms ease, background-color 120ms ease;
+  transition: border-color 140ms ease, background-color 140ms ease;
 }
 
 .drop-zone-active {
-  background: #eef7fc;
-  border-color: #1672b8;
+  background: var(--color-accent-bg-strong);
+  border-color: var(--color-accent);
 }
 
 .transfer-offer {
   align-items: flex-start;
-  background: #f4f8fb;
-  border-left: 3px solid #1672b8;
+  animation: slide-in 180ms ease;
+  background: var(--color-accent-bg);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 6px;
   margin-top: 14px;
   padding: 12px 14px;
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .transfer-offer > div:first-child {
@@ -425,7 +574,7 @@ button:focus-visible {
 }
 
 .transfer-row {
-  border-top: 1px solid #edf0f3;
+  border-top: 1px solid var(--color-border-soft);
   font-size: 13px;
   min-height: 38px;
   padding-top: 8px;
@@ -437,7 +586,7 @@ button:focus-visible {
 }
 
 .transfer-row progress {
-  accent-color: #1672b8;
+  accent-color: var(--color-accent);
   flex: 1;
   height: 8px;
   min-width: 80px;
@@ -448,11 +597,11 @@ button:focus-visible {
 }
 
 .transfer-completed {
-  color: #14683c;
+  color: var(--color-success);
 }
 
 .transfer-failed {
-  color: #a32020;
+  color: var(--color-danger);
 }
 
 .settings-panel {

@@ -146,12 +146,14 @@ mod tests {
         let first = PairedPeer {
             device: device.clone(),
             receive_clipboard: false,
+            send_clipboard: true,
             is_default_file_target: false,
             state: PeerConnectionState::Offline,
         };
         let second = PairedPeer {
             device,
             receive_clipboard: true,
+            send_clipboard: true,
             is_default_file_target: true,
             state: PeerConnectionState::Connected,
         };

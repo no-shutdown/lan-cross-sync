@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { open } from '@tauri-apps/plugin-dialog'
+import { isPermissionGranted, onAction, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import './App.css'
 import {
   acceptFileTransfer,
@@ -15,6 +16,7 @@ import {
   setDefaultFileTarget,
   setDeviceName,
   setReceiveClipboard,
+  setSendClipboard,
   setUiLocale,
   startFileTransfer,
   startPairing,
@@ -51,6 +53,20 @@ function formatBytes(value: number): string {
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
   if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`
   return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+function notifyIncomingTransfer(locale: Locale, event: Extract<TransferEvent, { type: 'offer' }>) {
+  try {
+    sendNotification({
+      title: t(locale, 'notificationIncomingTitle'),
+      body: t(locale, 'notificationIncomingBody')
+        .replace('{name}', event.peer.name)
+        .replace('{count}', String(event.manifest.entries.length)),
+      extra: { transferId: event.transfer_id },
+    })
+  } catch {
+    // Notifications are unavailable in the browser preview or unsupported platforms.
+  }
 }
 
 function backendError(locale: Locale, err: unknown, fallback: string): string {
@@ -90,9 +106,18 @@ function PeerCard({
   refresh: () => Promise<void>
   onError: (message: string) => void
 }) {
-  async function toggleClipboard() {
+  async function toggleReceiveClipboard() {
     try {
       await setReceiveClipboard(peer.device.id, !peer.receive_clipboard)
+      await refresh()
+    } catch (err) {
+      onError(backendError(locale, err, t(locale, 'errorTransfer')))
+    }
+  }
+
+  async function toggleSendClipboard() {
+    try {
+      await setSendClipboard(peer.device.id, !peer.send_clipboard)
       await refresh()
     } catch (err) {
       onError(backendError(locale, err, t(locale, 'errorTransfer')))
@@ -128,8 +153,12 @@ function PeerCard({
       </div>
       <div className="peer-actions">
         <label className="check-row">
-          <input type="checkbox" checked={peer.receive_clipboard} onChange={() => void toggleClipboard()} />
+          <input type="checkbox" checked={peer.receive_clipboard} onChange={() => void toggleReceiveClipboard()} />
           {t(locale, 'receiveClipboard')}
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={peer.send_clipboard} onChange={() => void toggleSendClipboard()} />
+          {t(locale, 'sendClipboard')}
         </label>
         <button onClick={() => void makeDefaultTarget()} disabled={peer.is_default_file_target}>
           {peer.is_default_file_target ? t(locale, 'defaultTarget') : t(locale, 'setFileTarget')}
@@ -258,7 +287,7 @@ function DiscoveredDeviceCard({
             onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
           />
         </label>
-        <button onClick={() => void pair()} disabled={pending || code.length !== 6}>
+        <button className="primary" onClick={() => void pair()} disabled={pending || code.length !== 6}>
           {pending ? t(locale, 'pairingPending') : t(locale, 'pair')}
         </button>
       </div>
@@ -279,17 +308,21 @@ function TransferPanel({
   onEvent: (event: TransferEvent) => void
   onError: (message: string) => void
 }) {
-  const defaultTarget = dashboard.paired_devices.find((peer) => peer.is_default_file_target)
+  const onlinePeers = dashboard.paired_devices.filter((peer) => peer.state === 'connected')
+  const defaultTarget = onlinePeers.find((peer) => peer.is_default_file_target)
   const [selectedTarget, setSelectedTarget] = useState<DeviceId | ''>(defaultTarget?.device.id ?? '')
   const [dropActive, setDropActive] = useState(false)
   const [incomingOffer, setIncomingOffer] = useState<Extract<TransferEvent, { type: 'offer' }> | null>(null)
 
   const targetId = selectedTarget || defaultTarget?.device.id || ''
-  const target = dashboard.paired_devices.find((peer) => peer.device.id === targetId)
+  const target = onlinePeers.find((peer) => peer.device.id === targetId)
   const recentEvents = useMemo(() => events.slice(0, 5), [events])
 
   useEffect(() => {
-    if (selectedTarget && !dashboard.paired_devices.some((peer) => peer.device.id === selectedTarget)) {
+    // A target that goes offline (or is unpaired) should fall back to the
+    // placeholder instead of silently pointing at a device that can no
+    // longer receive a transfer.
+    if (selectedTarget && !onlinePeers.some((peer) => peer.device.id === selectedTarget)) {
       setSelectedTarget('')
     }
   }, [dashboard.paired_devices, selectedTarget])
@@ -384,9 +417,9 @@ function TransferPanel({
           <span>{t(locale, 'targetDevice')}</span>
           <select value={targetId} onChange={(event) => setSelectedTarget(event.target.value)}>
             <option value="">{t(locale, 'chooseTarget')}</option>
-            {dashboard.paired_devices.map((peer) => (
+            {onlinePeers.map((peer) => (
               <option key={peer.device.id} value={peer.device.id}>
-                {peer.device.name} · {deviceStateLabel(locale, peer.state)}
+                {peer.device.name}
               </option>
             ))}
           </select>
@@ -396,7 +429,7 @@ function TransferPanel({
       <div className={`drop-zone ${dropActive ? 'drop-zone-active' : ''}`}>
         <strong>{t(locale, 'dropTitle')}</strong>
         <span>{target?.state === 'connected' ? t(locale, 'selectFiles') : t(locale, 'dropHint')}</span>
-        <button onClick={() => void chooseFiles()} disabled={!targetId || target?.state !== 'connected'}>
+        <button className="primary" onClick={() => void chooseFiles()} disabled={!targetId || target?.state !== 'connected'}>
           {t(locale, 'selectFiles')}
         </button>
       </div>
@@ -411,7 +444,7 @@ function TransferPanel({
             </span>
           </div>
           <div className="inline-actions">
-            <button onClick={() => void acceptIncoming()}>{t(locale, 'accept')}</button>
+            <button className="primary" onClick={() => void acceptIncoming()}>{t(locale, 'accept')}</button>
             <button className="danger" onClick={() => void rejectIncoming()}>
               {t(locale, 'reject')}
             </button>
@@ -513,6 +546,9 @@ export default function App() {
 
   function onTransferEvent(event: TransferEvent) {
     setEvents((current) => [event, ...current.filter((item) => item.transfer_id !== event.transfer_id || item.type !== event.type)].slice(0, 12))
+    if (event.type === 'offer' && event.direction === 'receiving') {
+      notifyIncomingTransfer(locale, event)
+    }
   }
 
   useEffect(() => {
@@ -521,8 +557,48 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [])
 
+  useEffect(() => {
+    let disposed = false
+    let unlistenAction: (() => void) | undefined
+
+    void (async () => {
+      try {
+        let granted = await isPermissionGranted()
+        if (!granted) {
+          granted = (await requestPermission()) === 'granted'
+        }
+      } catch {
+        // Notifications are unavailable in the browser preview or unsupported platforms.
+      }
+      try {
+        const listener = await onAction(() => {
+          const appWindow = getCurrentWebviewWindow()
+          void appWindow.show()
+          void appWindow.setFocus()
+        })
+        if (disposed) {
+          listener.unregister()
+        } else {
+          unlistenAction = () => listener.unregister()
+        }
+      } catch {
+        // ignore
+      }
+    })()
+
+    return () => {
+      disposed = true
+      unlistenAction?.()
+    }
+  }, [])
+
   if (!dashboard) {
-    return <main className="shell loading-state">{t(locale, 'appName')}</main>
+    return (
+      <main className="shell loading-state">
+        <div className="spinner" />
+        <p>{t(locale, 'appName')}</p>
+      </main>
+    )
   }
 
   return (
@@ -550,7 +626,14 @@ export default function App() {
         </div>
       </header>
 
-      {error && <section className="error">{error}</section>}
+      {error && (
+        <section className="error">
+          <span>{error}</span>
+          <button className="error-dismiss" onClick={() => setError(null)} aria-label={t(locale, 'cancel')}>
+            ×
+          </button>
+        </section>
+      )}
       {dashboard.pairing_error_code && (
         <section className="error">{backendError(locale, dashboard.pairing_error_code, t(locale, 'errorPairing'))}</section>
       )}
@@ -593,7 +676,7 @@ export default function App() {
           {dashboard.active_pairing_code ? (
             <button onClick={() => void stopPairing()}>{t(locale, 'cancel')}</button>
           ) : (
-            <button onClick={() => void beginPairing()}>{t(locale, 'startPairing')}</button>
+            <button className="primary" onClick={() => void beginPairing()}>{t(locale, 'startPairing')}</button>
           )}
         </div>
         {dashboard.active_pairing_code && <div className="pairing-code">{dashboard.active_pairing_code}</div>}

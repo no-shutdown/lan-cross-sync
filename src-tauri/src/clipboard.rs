@@ -216,7 +216,7 @@ impl ClipboardService {
             .unwrap()
             .paired_peers
             .iter()
-            .filter(|peer| peer.receive_clipboard && self.transport.is_connected(&peer.device.id))
+            .filter(|peer| peer.send_clipboard && self.transport.is_connected(&peer.device.id))
             .map(|peer| peer.device.id.clone())
             .collect::<Vec<_>>();
         for peer_id in peer_ids {
@@ -299,7 +299,7 @@ where
     settings
         .paired_peers
         .iter()
-        .any(|peer| peer.receive_clipboard && is_connected(&peer.device.id))
+        .any(|peer| peer.send_clipboard && is_connected(&peer.device.id))
 }
 
 fn event_from_payload(
@@ -422,12 +422,13 @@ mod tests {
     use super::*;
     use crate::domain::{DeviceInfo, PairedPeer, PeerConnectionState};
 
-    fn settings_with_peer(receive_clipboard: bool) -> LocalSettings {
+    fn settings_with_peer(send_clipboard: bool) -> LocalSettings {
         LocalSettings {
             local_device: DeviceInfo::new_local("Windows Desk", 45731),
             paired_peers: vec![PairedPeer {
                 device: DeviceInfo::new_local("MacBook", 45731),
-                receive_clipboard,
+                receive_clipboard: true,
+                send_clipboard,
                 is_default_file_target: false,
                 state: PeerConnectionState::Offline,
             }],
@@ -455,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn clipboard_polling_ignores_peers_that_disabled_receiving() {
+    fn clipboard_polling_ignores_peers_that_disabled_sending() {
         let settings = settings_with_peer(false);
 
         assert!(!has_active_clipboard_target(&settings, |_| true));

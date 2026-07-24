@@ -134,6 +134,10 @@ impl PairingRuntime {
                 .as_ref()
                 .map(|peer| peer.receive_clipboard)
                 .unwrap_or(true),
+            send_clipboard: existing
+                .as_ref()
+                .map(|peer| peer.send_clipboard)
+                .unwrap_or(true),
             is_default_file_target: existing
                 .as_ref()
                 .map(|peer| peer.is_default_file_target)

@@ -39,8 +39,14 @@ pub enum PeerConnectionState {
 pub struct PairedPeer {
     pub device: DeviceInfo,
     pub receive_clipboard: bool,
+    #[serde(default = "default_send_clipboard")]
+    pub send_clipboard: bool,
     pub is_default_file_target: bool,
     pub state: PeerConnectionState,
+}
+
+pub fn default_send_clipboard() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -121,6 +127,7 @@ mod tests {
         let peer = PairedPeer {
             device: DeviceInfo::new_local("MacBook", 45731),
             receive_clipboard: true,
+            send_clipboard: true,
             is_default_file_target: false,
             state: PeerConnectionState::Offline,
         };
@@ -129,6 +136,27 @@ mod tests {
         let decoded: PairedPeer = serde_json::from_str(&json).unwrap();
 
         assert_eq!(decoded, peer);
+    }
+
+    #[test]
+    fn old_paired_peers_default_to_sending_clipboard_when_decoded() {
+        let raw = r#"{
+            "device": {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "name": "Windows Desk",
+                "app_version": "0.1.0",
+                "protocol_version": 2,
+                "port": 45731,
+                "capabilities": ["discovery"]
+            },
+            "receive_clipboard": true,
+            "is_default_file_target": false,
+            "state": "offline"
+        }"#;
+
+        let peer: PairedPeer = serde_json::from_str(raw).unwrap();
+
+        assert!(peer.send_clipboard);
     }
 
     #[test]

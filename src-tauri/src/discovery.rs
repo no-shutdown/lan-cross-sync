@@ -526,6 +526,7 @@ mod tests {
         let mut registry = PeerRegistry::from_paired(vec![PairedPeer {
             device: remote,
             receive_clipboard: true,
+            send_clipboard: true,
             is_default_file_target: false,
             state: PeerConnectionState::Offline,
         }]);

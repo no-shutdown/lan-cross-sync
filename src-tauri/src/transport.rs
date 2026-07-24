@@ -704,6 +704,7 @@ mod tests {
         let registry = Arc::new(Mutex::new(PeerRegistry::from_paired(vec![PairedPeer {
             device: peer.clone(),
             receive_clipboard: true,
+            send_clipboard: true,
             is_default_file_target: false,
             state: PeerConnectionState::Connected,
         }])));

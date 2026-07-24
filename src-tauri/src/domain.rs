@@ -1,3 +1,4 @@
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -54,6 +55,14 @@ pub fn default_ui_locale() -> String {
     "zh-CN".to_string()
 }
 
+/// Generates a per-install default device name that distinguishes this
+/// device from others out of the box, without relying on hostname or MAC
+/// address lookups (unreliable/restricted on mobile targets).
+pub fn generate_default_device_name() -> String {
+    let code = rand::rng().random_range(0..=0xFFFFFF_u32);
+    format!("Device-{code:06X}")
+}
+
 impl DeviceId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
@@ -93,6 +102,18 @@ mod tests {
         assert!(device.capabilities.contains(&Capability::Pairing));
         assert!(device.capabilities.contains(&Capability::Clipboard));
         assert!(device.capabilities.contains(&Capability::FileTransfer));
+    }
+
+    #[test]
+    fn default_device_name_is_a_distinguishing_random_code() {
+        let first = generate_default_device_name();
+        let second = generate_default_device_name();
+
+        assert!(first.starts_with("Device-"));
+        let suffix = first.strip_prefix("Device-").unwrap();
+        assert_eq!(suffix.len(), 6);
+        assert!(suffix.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_lowercase()));
+        assert_ne!(first, second);
     }
 
     #[test]

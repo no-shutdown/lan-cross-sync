@@ -1,5 +1,5 @@
 use crate::{
-    domain::{DeviceId, DeviceInfo},
+    domain::{DeviceId, DeviceInfo, LocalSettings},
     pairing::PairingRuntime,
     protocol::{
         decode_message, encode_message, DiscoveryPacket, LanMessage, PairingConfirm,
@@ -12,7 +12,7 @@ use if_addrs::{get_if_addrs, IfAddr};
 use std::{
     collections::HashSet,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 use tokio::{
     net::UdpSocket,
@@ -97,7 +97,7 @@ pub fn apply_discovery_packet_at(
     Ok(true)
 }
 
-pub async fn announce_loop(device: DeviceInfo, port: u16) -> Result<()> {
+pub async fn announce_loop(settings: Arc<Mutex<LocalSettings>>, port: u16) -> Result<()> {
     let socket = UdpSocket::bind(("0.0.0.0", 0))
         .await
         .context("failed to bind discovery UDP socket")?;
@@ -111,11 +111,15 @@ pub async fn announce_loop(device: DeviceInfo, port: u16) -> Result<()> {
             vec![discovery_socket_addr(port)]
         }
     };
-    let payload = encode_discovery(device)?;
     let mut interval = time::interval(DISCOVERY_INTERVAL);
 
     loop {
         interval.tick().await;
+        // Re-read the local device on every tick (instead of once at
+        // startup) so a rename via `set_device_name` is picked up by the
+        // very next broadcast rather than only after an app restart.
+        let device = settings.lock().unwrap().local_device.clone();
+        let payload = encode_discovery(device)?;
         for target in &targets {
             socket
                 .send_to(&payload, target)
@@ -126,7 +130,7 @@ pub async fn announce_loop(device: DeviceInfo, port: u16) -> Result<()> {
 }
 
 pub async fn receive_loop_with_pairing(
-    socket: UdpSocket,
+    socket: Arc<UdpSocket>,
     pairing: Arc<PairingRuntime>,
 ) -> Result<()> {
     let mut buffer = vec![0_u8; 64 * 1024];
@@ -358,8 +362,27 @@ fn handle_pairing_confirm(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{PairedPeer, PeerConnectionState};
+    use crate::domain::{LocalSettings, PairedPeer, PeerConnectionState};
+    use crate::pairing::send_pairing_request;
+    use crate::settings::SettingsStore;
     use std::net::SocketAddr;
+    use std::sync::Mutex;
+    use tokio::time::{timeout, Duration as TokioDuration};
+
+    fn test_pairing_runtime(local_device: DeviceInfo, dir: &tempfile::TempDir) -> PairingRuntime {
+        let settings = LocalSettings {
+            local_device: local_device.clone(),
+            paired_peers: Vec::new(),
+            ui_locale: "zh-CN".to_string(),
+        };
+        PairingRuntime::new(
+            local_device,
+            Arc::new(Mutex::new(settings)),
+            SettingsStore::new(dir.path().join("settings.json")),
+            Arc::new(Mutex::new(PeerRegistry::new())),
+            Arc::new(Mutex::new(None)),
+        )
+    }
 
     #[test]
     fn discovery_packet_round_trips_to_device_info() {
@@ -514,5 +537,60 @@ mod tests {
         assert!(applied);
         assert!(registry.discovered().is_empty());
         assert_eq!(registry.paired()[0].state, PeerConnectionState::Discovered);
+    }
+
+    #[tokio::test]
+    async fn pairing_handshake_completes_when_requester_sends_from_its_listening_socket() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let device_a = DeviceInfo::new_local("Device A", 45731);
+        let device_b = DeviceInfo::new_local("Device B", 45731);
+
+        let socket_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let socket_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr_a = socket_a.local_addr().unwrap();
+
+        let pairing_a = test_pairing_runtime(device_a.clone(), &dir_a);
+        *pairing_a.active.lock().unwrap() = Some(crate::pairing::PairingSession::with_code_for_test("123456"));
+
+        let pairing_b = test_pairing_runtime(device_b.clone(), &dir_b);
+
+        // Requester sends the pairing request from the very socket it also
+        // listens on for the response (mirrors the shared discovery socket
+        // used in production).
+        send_pairing_request(
+            &socket_b,
+            &pairing_b,
+            device_a.clone(),
+            addr_a,
+            "123456".to_string(),
+        )
+        .await
+        .unwrap();
+
+        let mut buffer = vec![0_u8; 4096];
+        let (len, source) = socket_a.recv_from(&mut buffer).await.unwrap();
+        handle_lan_message(&socket_a, &buffer[..len], source, &pairing_a)
+            .await
+            .unwrap();
+
+        let (len, source) = timeout(TokioDuration::from_secs(1), socket_b.recv_from(&mut buffer))
+            .await
+            .expect("requester did not receive the pairing response on its listening socket")
+            .unwrap();
+        handle_lan_message(&socket_b, &buffer[..len], source, &pairing_b)
+            .await
+            .unwrap();
+
+        let (len, source) = timeout(TokioDuration::from_secs(1), socket_a.recv_from(&mut buffer))
+            .await
+            .expect("acceptor did not receive the pairing confirmation")
+            .unwrap();
+        handle_lan_message(&socket_a, &buffer[..len], source, &pairing_a)
+            .await
+            .unwrap();
+
+        assert!(pairing_a.registry.lock().unwrap().is_paired(&device_b.id));
+        assert!(pairing_b.registry.lock().unwrap().is_paired(&device_a.id));
     }
 }

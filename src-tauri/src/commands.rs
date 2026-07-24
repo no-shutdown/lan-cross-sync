@@ -2,8 +2,7 @@ use crate::{
     domain::{DeviceId, LocalSettings, PairedPeer},
     error::{AppError, AppResult},
     file_transfer::FileTransferService,
-    pairing::{PairingRuntime, PairingSession},
-    protocol::{encode_message, LanMessage, PairingRequest, PROTOCOL_VERSION},
+    pairing::{self, PairingRuntime, PairingSession},
     registry::PeerRegistry,
     settings::{SettingsStore, DEFAULT_DISCOVERY_PORT},
     transport::TransportRuntime,
@@ -17,7 +16,6 @@ use tauri::State;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_autostart::ManagerExt;
 use tokio::net::UdpSocket;
-use uuid::Uuid;
 
 pub struct AppState {
     pub settings_store: SettingsStore,
@@ -28,6 +26,7 @@ pub struct AppState {
     pub transport: Arc<TransportRuntime>,
     pub transfers: Arc<FileTransferService>,
     pub network_status: Arc<Mutex<NetworkStatus>>,
+    pub discovery_socket: Option<Arc<UdpSocket>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -167,7 +166,7 @@ pub async fn request_pairing(
         return Err(AppError::Message("invalid_pairing_code".to_string()));
     }
 
-    let (target, endpoint, local_device) = {
+    let (target, endpoint) = {
         let registry = state.registry.lock().unwrap();
         let target = registry
             .device(&device_id)
@@ -175,37 +174,21 @@ pub async fn request_pairing(
         let endpoint = registry
             .discovery_endpoint(&device_id)
             .ok_or_else(|| AppError::Message("device_endpoint_unavailable".to_string()))?;
-        let local_device = state.settings.lock().unwrap().local_device.clone();
-        (target, endpoint, local_device)
+        (target, endpoint)
     };
+    let socket = state
+        .discovery_socket
+        .as_ref()
+        .ok_or_else(|| AppError::Message("network_discovery_unavailable".to_string()))?;
 
-    let request_id = Uuid::new_v4().to_string();
-    state
-        .pairing
-        .requests
-        .lock()
-        .unwrap()
-        .register_outgoing(request_id.clone(), target.clone());
     state.pairing.clear_error();
 
-    let message = LanMessage::PairingRequest(PairingRequest {
-        protocol_version: PROTOCOL_VERSION,
-        request_id: request_id.clone(),
-        target_device_id: target.id,
-        from_device: local_device,
-        code,
-    });
-    let payload =
-        encode_message(&message).map_err(|err| AppError::Anyhow(anyhow::Error::new(err)))?;
-    let socket = UdpSocket::bind(("0.0.0.0", 0))
+    // Sending from the shared discovery socket (rather than a throwaway one)
+    // is required: the peer replies to this packet's source port, and only
+    // the shared socket is polled by the receive loop for that reply.
+    pairing::send_pairing_request(socket, &state.pairing, target, endpoint, code)
         .await
-        .map_err(|err| AppError::Anyhow(err.into()))?;
-    socket
-        .send_to(&payload, endpoint)
-        .await
-        .map_err(|err| AppError::Anyhow(err.into()))?;
-
-    Ok(request_id)
+        .map_err(AppError::Anyhow)
 }
 
 #[tauri::command]
@@ -245,6 +228,15 @@ pub async fn cancel_file_transfer(
         .cancel_transfer(&transfer_id)
         .await
         .map_err(AppError::Anyhow)
+}
+
+#[tauri::command]
+pub fn set_device_name(state: State<'_, AppState>, name: String) -> AppResult<LocalSettings> {
+    let mut settings = state.settings.lock().unwrap();
+    let next = with_device_name(settings.clone(), name)?;
+    state.settings_store.save(&next)?;
+    *settings = next.clone();
+    Ok(next)
 }
 
 #[tauri::command]
@@ -304,6 +296,15 @@ pub fn clear_pairing(state: State<'_, AppState>, device_id: DeviceId) -> AppResu
     state.transport.disconnect_peer(&device_id);
     state.registry.lock().unwrap().remove_pairing(&device_id);
     Ok(next)
+}
+
+fn with_device_name(mut settings: LocalSettings, name: String) -> AppResult<LocalSettings> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > 40 {
+        return Err(AppError::Message("invalid_device_name".to_string()));
+    }
+    settings.local_device.name = trimmed.to_string();
+    Ok(settings)
 }
 
 fn with_receive_clipboard(
@@ -441,6 +442,33 @@ mod tests {
         let settings = local_settings(vec![paired_peer("MacBook", true)]);
 
         let result = without_pairing(settings, DeviceId::new());
+
+        assert!(matches!(result, Err(AppError::Message(_))));
+    }
+
+    #[test]
+    fn device_name_update_trims_and_applies_new_name() {
+        let settings = local_settings(vec![]);
+
+        let updated = with_device_name(settings, "  Study PC  ".to_string()).unwrap();
+
+        assert_eq!(updated.local_device.name, "Study PC");
+    }
+
+    #[test]
+    fn device_name_update_rejects_blank_name() {
+        let settings = local_settings(vec![]);
+
+        let result = with_device_name(settings, "   ".to_string());
+
+        assert!(matches!(result, Err(AppError::Message(_))));
+    }
+
+    #[test]
+    fn device_name_update_rejects_overly_long_name() {
+        let settings = local_settings(vec![]);
+
+        let result = with_device_name(settings, "x".repeat(41));
 
         assert!(matches!(result, Err(AppError::Message(_))));
     }

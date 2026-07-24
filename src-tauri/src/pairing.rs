@@ -1,13 +1,16 @@
 use crate::{
     domain::{DeviceInfo, LocalSettings, PairedPeer, PeerConnectionState},
+    protocol::{encode_message, LanMessage, PairingRequest, PROTOCOL_VERSION},
     registry::PeerRegistry,
     settings::SettingsStore,
 };
+use anyhow::Context;
 use rand::RngExt;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::net::UdpSocket;
 use uuid::Uuid;
 
 pub const PAIRING_CODE_TTL: Duration = Duration::from_secs(120);
@@ -149,6 +152,40 @@ impl PairingRuntime {
         registry.set_paired(peer);
         Ok(())
     }
+}
+
+/// Sends a pairing request using the caller-provided socket, which MUST be the
+/// same socket the caller also listens on (e.g. the shared discovery socket
+/// bound in `lib.rs`). A response is addressed back to the request's UDP
+/// source port, so sending from a throwaway socket that nobody listens on
+/// silently discards the peer's reply and pairing never completes.
+pub async fn send_pairing_request(
+    socket: &UdpSocket,
+    pairing: &PairingRuntime,
+    target: DeviceInfo,
+    endpoint: SocketAddr,
+    code: String,
+) -> anyhow::Result<String> {
+    let request_id = Uuid::new_v4().to_string();
+    pairing
+        .requests
+        .lock()
+        .unwrap()
+        .register_outgoing(request_id.clone(), target.clone());
+
+    let message = LanMessage::PairingRequest(PairingRequest {
+        protocol_version: PROTOCOL_VERSION,
+        request_id: request_id.clone(),
+        target_device_id: target.id,
+        from_device: pairing.local_device.clone(),
+        code,
+    });
+    let payload = encode_message(&message).context("failed to encode pairing request")?;
+    socket
+        .send_to(&payload, endpoint)
+        .await
+        .with_context(|| format!("failed to send pairing request to {endpoint}"))?;
+    Ok(request_id)
 }
 
 #[derive(Clone)]

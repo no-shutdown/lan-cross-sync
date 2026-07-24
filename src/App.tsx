@@ -13,6 +13,7 @@ import {
   requestPairing,
   setAutostartEnabled,
   setDefaultFileTarget,
+  setDeviceName,
   setReceiveClipboard,
   setUiLocale,
   startFileTransfer,
@@ -62,6 +63,7 @@ function backendError(locale: Locale, err: unknown, fallback: string): string {
     invalid_code: 'errorInvalidCode',
     expired_code: 'errorExpiredCode',
     unpaired_peer: 'errorUnpairedPeer',
+    invalid_device_name: 'errorInvalidDeviceName',
   }
   return known[raw] ? t(locale, known[raw]) : raw
 }
@@ -137,6 +139,73 @@ function PeerCard({
         </button>
       </div>
     </article>
+  )
+}
+
+function DeviceNameEditor({
+  locale,
+  name,
+  onSaved,
+  onError,
+}: {
+  locale: Locale
+  name: string
+  onSaved: () => Promise<void>
+  onError: (message: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(name)
+  const [pending, setPending] = useState(false)
+
+  useEffect(() => {
+    if (!editing) setValue(name)
+  }, [name, editing])
+
+  async function save() {
+    if (pending) return
+    setPending(true)
+    try {
+      await setDeviceName(value)
+      setEditing(false)
+      await onSaved()
+    } catch (err) {
+      onError(backendError(locale, err, t(locale, 'errorTransfer')))
+    } finally {
+      setPending(false)
+    }
+  }
+
+  function cancel() {
+    setValue(name)
+    setEditing(false)
+  }
+
+  if (!editing) {
+    return (
+      <div className="device-name-row">
+        <p className="device-caption">{name}</p>
+        <button className="link-button" onClick={() => setEditing(true)}>
+          {t(locale, 'renameDevice')}
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="device-name-row">
+      <input
+        value={value}
+        maxLength={40}
+        placeholder={t(locale, 'renameDevicePlaceholder')}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <button onClick={() => void save()} disabled={pending || value.trim().length === 0}>
+        {t(locale, 'renameDeviceSave')}
+      </button>
+      <button onClick={cancel} disabled={pending}>
+        {t(locale, 'renameDeviceCancel')}
+      </button>
+    </div>
   )
 }
 
@@ -462,7 +531,12 @@ export default function App() {
         <div>
           <p className="eyebrow">{t(locale, 'localDevice')}</p>
           <h1>{t(locale, 'appName')}</h1>
-          <p className="device-caption">{dashboard.settings.local_device.name}</p>
+          <DeviceNameEditor
+            locale={locale}
+            name={dashboard.settings.local_device.name}
+            onSaved={refresh}
+            onError={setError}
+          />
         </div>
         <div className="topbar-actions">
           <label className="language-select">

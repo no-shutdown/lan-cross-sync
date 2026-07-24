@@ -29,6 +29,10 @@ export function setUiLocale(locale: Locale): Promise<LocalSettings> {
   return invoke('set_ui_locale', { locale })
 }
 
+export function setDeviceName(name: string): Promise<LocalSettings> {
+  return invoke('set_device_name', { name })
+}
+
 export function startFileTransfer(deviceId: DeviceId, paths: string[]): Promise<string> {
   return invoke('start_file_transfer', { deviceId, paths })
 }

@@ -16,8 +16,8 @@ use clipboard::ClipboardService;
 use commands::{
     accept_file_transfer, cancel_file_transfer, cancel_pairing, clear_pairing,
     get_autostart_enabled, get_dashboard_state, request_pairing, set_autostart_enabled,
-    set_default_file_target, set_receive_clipboard, set_ui_locale, start_file_transfer,
-    start_pairing, AppState, NetworkStatus,
+    set_default_file_target, set_device_name, set_receive_clipboard, set_ui_locale,
+    start_file_transfer, start_pairing, AppState, NetworkStatus,
 };
 use file_transfer::FileTransferService;
 use pairing::PairingRuntime;
@@ -52,7 +52,7 @@ pub fn run() {
                 .expect("failed to resolve app config directory");
             let settings_store = SettingsStore::new(app_config.join("settings.json"));
             let mut loaded_settings = settings_store
-                .load_or_create("LAN Cross Sync")
+                .load_or_create(&domain::generate_default_device_name())
                 .expect("failed to load settings");
             let preferred_transport_port = loaded_settings.local_device.port;
             let (transport_listener, transport_port, transport_fallback) =
@@ -74,7 +74,7 @@ pub fn run() {
             let discovery_socket = match tauri::async_runtime::block_on(
                 discovery::bind_discovery_socket(DEFAULT_DISCOVERY_PORT),
             ) {
-                Ok(socket) => Some(socket),
+                Ok(socket) => Some(Arc::new(socket)),
                 Err(err) => {
                     tracing::error!(?err, "LAN discovery UDP listener could not be bound");
                     None
@@ -138,20 +138,21 @@ pub fn run() {
                 transport: transport.clone(),
                 transfers: transfers.clone(),
                 network_status: network_status.clone(),
+                discovery_socket: discovery_socket.clone(),
             });
 
             if advertising {
-                let announce_device = discovery_device.clone();
+                let announce_settings = settings.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(err) =
-                        discovery::announce_loop(announce_device, DEFAULT_DISCOVERY_PORT).await
+                        discovery::announce_loop(announce_settings, DEFAULT_DISCOVERY_PORT).await
                     {
                         tracing::error!(?err, "LAN discovery announcer stopped");
                     }
                 });
             }
 
-            if let Some(discovery_socket) = discovery_socket {
+            if let Some(discovery_socket) = discovery_socket.clone() {
                 let receive_pairing = pairing.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(err) =
@@ -271,6 +272,7 @@ pub fn run() {
             request_pairing,
             set_receive_clipboard,
             set_default_file_target,
+            set_device_name,
             set_ui_locale,
             clear_pairing
         ])

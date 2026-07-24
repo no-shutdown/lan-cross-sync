@@ -117,6 +117,30 @@ button:focus-visible {
   margin-top: 4px !important;
 }
 
+.device-name-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.device-name-row input {
+  border: 1px solid #d7dfe7;
+  border-radius: 6px;
+  font-size: 14px;
+  padding: 4px 8px;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #1672b8;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0;
+}
+
 .topbar-actions,
 .inline-actions {
   align-items: center;

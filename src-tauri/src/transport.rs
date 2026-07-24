@@ -525,12 +525,25 @@ impl TransportRuntime {
         let mut heartbeat = time::interval(HEARTBEAT_INTERVAL);
         let mut last_pong = Instant::now();
         let mut next_nonce = 1_u64;
+        // Every error path below must `break Err(..)` rather than use `?`:
+        // `?` inside this loop returns early from `run_connection` itself
+        // (a bare `loop` is not a function boundary), which would skip the
+        // cleanup after the loop entirely and leave the peer stuck showing
+        // as connected forever after any read/write error.
         let result: Result<(), TransportError> = loop {
             tokio::select! {
                 message = read_message(&mut reader) => {
-                    match message? {
+                    let message = match message {
+                        Ok(message) => message,
+                        Err(err) => break Err(err),
+                    };
+                    match message {
                         TransportMessage::Ping { nonce } => {
-                            write_message(&mut writer, &TransportMessage::Pong { nonce }).await?;
+                            if let Err(err) =
+                                write_message(&mut writer, &TransportMessage::Pong { nonce }).await
+                            {
+                                break Err(err);
+                            }
                         }
                         TransportMessage::Pong { .. } => {
                             last_pong = Instant::now();
@@ -547,13 +560,19 @@ impl TransportRuntime {
                     let Some(message) = message else {
                         break Ok(());
                     };
-                    write_message(&mut writer, &message).await?;
+                    if let Err(err) = write_message(&mut writer, &message).await {
+                        break Err(err);
+                    }
                 }
                 _ = heartbeat.tick() => {
                     if last_pong.elapsed() > HEARTBEAT_TIMEOUT {
                         break Err(TransportError::HeartbeatTimeout);
                     }
-                    write_message(&mut writer, &TransportMessage::Ping { nonce: next_nonce }).await?;
+                    if let Err(err) =
+                        write_message(&mut writer, &TransportMessage::Ping { nonce: next_nonce }).await
+                    {
+                        break Err(err);
+                    }
                     next_nonce = next_nonce.wrapping_add(1);
                 }
             }
@@ -770,6 +789,67 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[tokio::test]
+    async fn abrupt_read_error_still_marks_peer_offline_and_emits_event() {
+        let local_a = DeviceInfo::new_local("Device A", 45731);
+        let local_b = DeviceInfo::new_local("Device B", 45731);
+        let registry_b = Arc::new(Mutex::new(PeerRegistry::from_paired(vec![PairedPeer {
+            device: local_a.clone(),
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Connected,
+        }])));
+        let (runtime_b, mut events_b) = TransportRuntime::new(local_b.clone(), registry_b.clone());
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn({
+            let runtime_b = runtime_b.clone();
+            async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let _ = runtime_b.accept_connection(stream).await;
+            }
+        });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        client_handshake(&mut stream, local_a.clone(), local_b.id.clone())
+            .await
+            .unwrap();
+
+        for _ in 0..100 {
+            if runtime_b.is_connected(&local_a.id) {
+                break;
+            }
+            time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(runtime_b.is_connected(&local_a.id));
+
+        // Simulate the peer vanishing without a clean shutdown handshake
+        // (crash, network drop, force-quit) rather than a graceful close.
+        drop(stream);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            assert!(!remaining.is_zero(), "peer was never marked offline");
+            let event = time::timeout(remaining, events_b.recv())
+                .await
+                .expect("did not receive a disconnect event in time")
+                .unwrap();
+            if matches!(event, TransportEvent::PeerDisconnected { .. }) {
+                break;
+            }
+        }
+
+        assert!(!runtime_b.is_connected(&local_a.id));
+        assert_eq!(
+            registry_b.lock().unwrap().paired()[0].state,
+            PeerConnectionState::Offline
+        );
     }
 
     #[test]

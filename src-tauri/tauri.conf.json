@@ -19,10 +19,23 @@
         "minHeight": 520
       },
       {
-        "label": "drop-overlay",
+        "label": "drop-handle",
         "title": "",
-        "width": 80,
-        "height": 80,
+        "width": 72,
+        "height": 72,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false,
+        "resizable": false
+      },
+      {
+        "label": "drop-panel",
+        "title": "",
+        "width": 248,
+        "height": 190,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,

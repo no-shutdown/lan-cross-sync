@@ -108,6 +108,7 @@ pub enum TransportMessage {
     FileChunk(FileChunk),
     FileComplete(FileComplete),
     FileCancel(FileCancel),
+    Unpair,
 }
 
 pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, TransportError> {
@@ -694,6 +695,81 @@ mod tests {
         assert!(used_fallback);
         assert_ne!(actual_port, occupied_port);
         assert_eq!(listener.local_addr().unwrap().port(), actual_port);
+    }
+
+    #[tokio::test]
+    async fn unpair_message_reaches_the_connected_peer() {
+        let local_a = DeviceInfo::new_local("Device A", 45731);
+        let local_b = DeviceInfo::new_local("Device B", 45731);
+        let registry_a = Arc::new(Mutex::new(PeerRegistry::from_paired(vec![PairedPeer {
+            device: local_b.clone(),
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Connected,
+        }])));
+        let registry_b = Arc::new(Mutex::new(PeerRegistry::from_paired(vec![PairedPeer {
+            device: local_a.clone(),
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Connected,
+        }])));
+        let (runtime_a, _events_a) = TransportRuntime::new(local_a.clone(), registry_a);
+        let (runtime_b, mut events_b) = TransportRuntime::new(local_b.clone(), registry_b);
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn({
+            let runtime_b = runtime_b.clone();
+            async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let _ = runtime_b.accept_connection(stream).await;
+            }
+        });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let peer = client_handshake(&mut stream, local_a.clone(), local_b.id.clone())
+            .await
+            .unwrap();
+        tokio::spawn({
+            let runtime_a = runtime_a.clone();
+            async move {
+                let _ = runtime_a.run_connection(stream, peer).await;
+            }
+        });
+
+        for _ in 0..100 {
+            if runtime_a.is_connected(&local_b.id) {
+                break;
+            }
+            time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(runtime_a.is_connected(&local_b.id));
+
+        runtime_a
+            .send_message(&local_b.id, TransportMessage::Unpair)
+            .await
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = time::timeout(remaining, events_b.recv())
+                .await
+                .expect("did not receive the unpair notice")
+                .unwrap();
+            if matches!(
+                event,
+                TransportEvent::Message {
+                    message: TransportMessage::Unpair,
+                    ..
+                }
+            ) {
+                break;
+            }
+        }
     }
 
     #[test]

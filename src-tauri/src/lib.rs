@@ -192,6 +192,10 @@ pub fn run() {
 
             let clipboard_events = clipboard.clone();
             let file_events = transfers.clone();
+            let unpair_settings = settings.clone();
+            let unpair_settings_store = settings_store.clone();
+            let unpair_registry = registry.clone();
+            let unpair_transport = transport.clone();
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = transport_events.recv().await {
                     match event {
@@ -217,6 +221,17 @@ pub fn run() {
                             | TransportMessage::FileCancel(_)) => {
                                 if let Err(err) = file_events.handle_message(&peer, message).await {
                                     tracing::debug!(?err, device_id = ?peer.id, "file transfer message was rejected");
+                                }
+                            }
+                            TransportMessage::Unpair => {
+                                if let Err(err) = commands::remove_paired_peer(
+                                    &unpair_settings,
+                                    &unpair_settings_store,
+                                    &unpair_registry,
+                                    &unpair_transport,
+                                    &peer.id,
+                                ) {
+                                    tracing::debug!(?err, device_id = ?peer.id, "failed to remove pairing after remote unpair notice");
                                 }
                             }
                             _ => {}

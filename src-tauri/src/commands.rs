@@ -306,13 +306,46 @@ pub fn set_default_file_target(
 }
 
 #[tauri::command]
-pub fn clear_pairing(state: State<'_, AppState>, device_id: DeviceId) -> AppResult<LocalSettings> {
-    let mut settings = state.settings.lock().unwrap();
-    let next = without_pairing(settings.clone(), device_id.clone())?;
-    state.settings_store.save(&next)?;
-    *settings = next.clone();
-    state.transport.disconnect_peer(&device_id);
-    state.registry.lock().unwrap().remove_pairing(&device_id);
+pub async fn clear_pairing(
+    state: State<'_, AppState>,
+    device_id: DeviceId,
+) -> AppResult<LocalSettings> {
+    // Best-effort: if the peer is currently connected, tell it to drop the
+    // pairing too. If it isn't reachable right now, this is silently
+    // skipped — the peer's own settings still show it as paired until it
+    // notices we've rejected it on a later reconnect attempt.
+    let _ = state
+        .transport
+        .send_message(&device_id, crate::transport::TransportMessage::Unpair)
+        .await;
+    remove_paired_peer(
+        &state.settings,
+        &state.settings_store,
+        &state.registry,
+        &state.transport,
+        &device_id,
+    )
+}
+
+/// Removes a paired peer from local settings, persists the change, closes
+/// any active connection, and drops it from the live registry. Shared by
+/// the outbound `clear_pairing` command and the inbound handler for a
+/// peer-initiated `TransportMessage::Unpair` notice, so both directions of
+/// an unpair converge on the same local cleanup.
+pub fn remove_paired_peer(
+    settings: &Arc<Mutex<LocalSettings>>,
+    settings_store: &SettingsStore,
+    registry: &Arc<Mutex<PeerRegistry>>,
+    transport: &TransportRuntime,
+    device_id: &DeviceId,
+) -> AppResult<LocalSettings> {
+    let mut settings_guard = settings.lock().unwrap();
+    let next = without_pairing(settings_guard.clone(), device_id.clone())?;
+    settings_store.save(&next)?;
+    *settings_guard = next.clone();
+    drop(settings_guard);
+    transport.disconnect_peer(device_id);
+    registry.lock().unwrap().remove_pairing(device_id);
     Ok(next)
 }
 
@@ -399,6 +432,55 @@ fn active_pairing_code(active_pairing: &mut Option<PairingSession>) -> Option<St
 mod tests {
     use super::*;
     use crate::domain::{DeviceInfo, PeerConnectionState};
+
+    #[test]
+    fn remove_paired_peer_persists_removal_and_clears_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::new(dir.path().join("settings.json"));
+        let peer_device = DeviceInfo::new_local("MacBook", 45731);
+        let peer_id = peer_device.id.clone();
+        let peer = PairedPeer {
+            device: peer_device,
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Connected,
+        };
+        let settings = Arc::new(Mutex::new(LocalSettings {
+            local_device: DeviceInfo::new_local("Windows Desk", 45731),
+            paired_peers: vec![peer.clone()],
+            ui_locale: "zh-CN".to_string(),
+        }));
+        store.save(&settings.lock().unwrap()).unwrap();
+        let registry = Arc::new(Mutex::new(PeerRegistry::from_paired(vec![peer])));
+        let (transport, _events) = TransportRuntime::new(
+            DeviceInfo::new_local("Windows Desk", 45731),
+            registry.clone(),
+        );
+
+        let next = remove_paired_peer(&settings, &store, &registry, &transport, &peer_id).unwrap();
+
+        assert!(next.paired_peers.is_empty());
+        assert!(registry.lock().unwrap().paired().is_empty());
+        let reloaded = store.load_or_create("Ignored").unwrap();
+        assert!(reloaded.paired_peers.is_empty());
+    }
+
+    #[test]
+    fn remove_paired_peer_errors_on_unknown_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::new(dir.path().join("settings.json"));
+        let settings = Arc::new(Mutex::new(local_settings(vec![])));
+        let registry = Arc::new(Mutex::new(PeerRegistry::new()));
+        let (transport, _events) = TransportRuntime::new(
+            DeviceInfo::new_local("Windows Desk", 45731),
+            registry.clone(),
+        );
+
+        let result = remove_paired_peer(&settings, &store, &registry, &transport, &DeviceId::new());
+
+        assert!(matches!(result, Err(AppError::Message(_))));
+    }
 
     fn local_settings(peers: Vec<PairedPeer>) -> LocalSettings {
         LocalSettings {

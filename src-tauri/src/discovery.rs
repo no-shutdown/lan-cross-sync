@@ -1,6 +1,6 @@
 use crate::{
-    domain::{DeviceId, DeviceInfo, LocalSettings},
-    pairing::PairingRuntime,
+    domain::{DeviceId, DeviceInfo, LocalSettings, PairedPeer, PeerConnectionState},
+    pairing::{PairingRuntime, PairingSession},
     protocol::{
         decode_message, encode_message, DiscoveryPacket, LanMessage, PairingConfirm,
         PairingRequest, PairingResponse, PROTOCOL_VERSION,
@@ -95,6 +95,23 @@ pub fn apply_discovery_packet_at(
 
     registry.mark_discovered_at(device, source);
     Ok(true)
+}
+
+/// Whether this device should broadcast a discovery packet to the whole
+/// subnet on this tick. Steady-state (search switch off, nobody actively
+/// pairing, every paired peer already connected) is the only case that
+/// returns false — everything else needs the wider reach a broadcast gives
+/// to be found by, or to re-find, a peer.
+pub fn should_broadcast(
+    search_enabled: bool,
+    pairing_active: bool,
+    paired_peers: &[PairedPeer],
+) -> bool {
+    search_enabled
+        || pairing_active
+        || paired_peers
+            .iter()
+            .any(|peer| peer.state != PeerConnectionState::Connected)
 }
 
 pub async fn announce_loop(settings: Arc<Mutex<LocalSettings>>, port: u16) -> Result<()> {
@@ -411,6 +428,46 @@ mod tests {
 
         assert_eq!(*addr.ip(), DISCOVERY_BROADCAST_ADDR);
         assert_eq!(addr.port(), 45731);
+    }
+
+    fn paired_peer_with_state(state: PeerConnectionState) -> PairedPeer {
+        PairedPeer {
+            device: DeviceInfo::new_local("MacBook", 45731),
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state,
+        }
+    }
+
+    #[test]
+    fn should_broadcast_when_search_enabled() {
+        assert!(should_broadcast(true, false, &[]));
+    }
+
+    #[test]
+    fn should_broadcast_when_pairing_active() {
+        assert!(should_broadcast(false, true, &[]));
+    }
+
+    #[test]
+    fn should_broadcast_when_a_paired_peer_is_not_connected() {
+        let peers = vec![
+            paired_peer_with_state(PeerConnectionState::Connected),
+            paired_peer_with_state(PeerConnectionState::Offline),
+        ];
+        assert!(should_broadcast(false, false, &peers));
+    }
+
+    #[test]
+    fn should_not_broadcast_in_steady_state() {
+        let peers = vec![paired_peer_with_state(PeerConnectionState::Connected)];
+        assert!(!should_broadcast(false, false, &peers));
+    }
+
+    #[test]
+    fn should_not_broadcast_with_no_paired_peers_and_switch_off() {
+        assert!(!should_broadcast(false, false, &[]));
     }
 
     #[test]

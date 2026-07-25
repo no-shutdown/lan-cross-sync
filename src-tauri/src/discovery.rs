@@ -488,7 +488,7 @@ mod tests {
     #[test]
     fn connected_peer_endpoints_includes_only_connected_devices_with_known_address() {
         let mut registry = PeerRegistry::new();
-        let connected = DeviceInfo::new_local("MacBook", 45731);
+        let connected = DeviceInfo::new_local("MacBook", 46001);
         let offline = DeviceInfo::new_local("Linux Desk", 45731);
         registry.set_paired(PairedPeer {
             device: connected.clone(),
@@ -524,6 +524,25 @@ mod tests {
         });
 
         assert!(connected_peer_endpoints(&registry).is_empty());
+    }
+
+    #[test]
+    fn connected_peer_endpoints_excludes_offline_peer_even_with_known_address() {
+        let mut registry = PeerRegistry::new();
+        let offline = DeviceInfo::new_local("Linux Desk", 45731);
+        registry.set_paired(PairedPeer {
+            device: offline.clone(),
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Offline,
+        });
+        let source: SocketAddr = "192.0.2.30:54321".parse().unwrap();
+        registry.mark_discovered_at(offline, source);
+
+        let endpoints = connected_peer_endpoints(&registry);
+
+        assert!(endpoints.is_empty());
     }
 
     #[test]

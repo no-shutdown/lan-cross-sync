@@ -633,6 +633,16 @@ export function DropPanel() {
   }, [])
 
   useEffect(() => {
+    // The window starts visible (see tauri.conf.json) so WebView2 registers
+    // native OS drag-and-drop during initial setup on Windows — a window
+    // created hidden and shown later via JS never picks up drag events
+    // there. Hide it again immediately once that registration has happened.
+    void win.hide().catch((err) => {
+      console.error('failed to hide drop panel window after initial mount', err)
+    })
+  }, [win])
+
+  useEffect(() => {
     async function refresh() {
       try {
         setDashboard(await getDashboardState())

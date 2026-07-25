@@ -18,6 +18,7 @@ import {
   setDefaultFileTarget,
   setDeviceName,
   setReceiveClipboard,
+  setSearchEnabled,
   setSendClipboard,
   setUiLocale,
   startFileTransfer,
@@ -1329,6 +1330,16 @@ export default function App() {
     }
   }
 
+  async function toggleSearchEnabled() {
+    if (!dashboard) return
+    try {
+      await setSearchEnabled(!dashboard.settings.search_enabled)
+      await refresh()
+    } catch (err) {
+      setError(backendError(locale, err, t(locale, 'errorTransfer')))
+    }
+  }
+
   async function beginPairing() {
     try {
       await startPairing()
@@ -1547,6 +1558,15 @@ export default function App() {
           />
           {t(locale, 'autostart')}
         </label>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={dashboard.settings.search_enabled}
+            onChange={() => void toggleSearchEnabled()}
+          />
+          {t(locale, 'searchDevices')}
+        </label>
+        <p className="hint">{t(locale, 'searchDevicesHint')}</p>
       </section>
     </main>
   )

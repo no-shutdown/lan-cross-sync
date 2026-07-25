@@ -253,6 +253,16 @@ pub fn set_ui_locale(state: State<'_, AppState>, locale: String) -> AppResult<Lo
 }
 
 #[tauri::command]
+pub fn set_search_enabled(state: State<'_, AppState>, enabled: bool) -> AppResult<LocalSettings> {
+    let mut settings = state.settings.lock().unwrap();
+    let mut next = settings.clone();
+    next.search_enabled = enabled;
+    state.settings_store.save(&next)?;
+    *settings = next.clone();
+    Ok(next)
+}
+
+#[tauri::command]
 pub fn set_receive_clipboard(
     state: State<'_, AppState>,
     device_id: DeviceId,

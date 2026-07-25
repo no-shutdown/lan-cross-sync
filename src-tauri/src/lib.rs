@@ -16,8 +16,9 @@ use clipboard::ClipboardService;
 use commands::{
     accept_file_transfer, cancel_file_transfer, cancel_pairing, clear_pairing,
     get_autostart_enabled, get_dashboard_state, request_pairing, set_autostart_enabled,
-    set_default_file_target, set_device_name, set_receive_clipboard, set_send_clipboard,
-    set_ui_locale, start_file_transfer, start_pairing, AppState, NetworkStatus,
+    set_default_file_target, set_device_name, set_receive_clipboard, set_search_enabled,
+    set_send_clipboard, set_ui_locale, start_file_transfer, start_pairing, AppState,
+    NetworkStatus,
 };
 use file_transfer::FileTransferService;
 use pairing::PairingRuntime;
@@ -291,6 +292,7 @@ pub fn run() {
             set_default_file_target,
             set_device_name,
             set_ui_locale,
+            set_search_enabled,
             clear_pairing
         ])
         .run(tauri::generate_context!())

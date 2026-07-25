@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { emitTo, listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewWindow'
-import { LogicalPosition } from '@tauri-apps/api/dpi'
-import { cursorPosition } from '@tauri-apps/api/window'
+import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi'
+import { cursorPosition, monitorFromPoint, primaryMonitor } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
 import { isPermissionGranted, onAction, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import './App.css'
@@ -38,9 +38,16 @@ import {
   OVERLAY_HANDLE_W,
   OVERLAY_PANEL_H,
   OVERLAY_PANEL_W,
+  clampPanelPosition,
+  defaultOverlayBounds,
   handlePositionFromPanel,
+  handleSizeForEdge,
+  nearestHandlePlacement,
   panelPositionFromHandle,
+  type OverlayBounds,
   type OverlayDropPayload,
+  type OverlayEdge,
+  type OverlayHandlePlacement,
 } from './lib/overlay'
 import type {
   DashboardState,
@@ -99,11 +106,38 @@ async function emitOverlayEvent<T>(target: string, event: string, payload?: T) {
 }
 
 function initialHandlePosition(): OverlayPosition {
-  const screen = window.screen as Screen & { availLeft?: number; availTop?: number }
+  const bounds = defaultOverlayBounds()
   return {
-    x: (screen.availLeft ?? 0) + screen.availWidth - OVERLAY_HANDLE_W,
-    y: (screen.availTop ?? 0) + screen.availHeight - OVERLAY_HANDLE_H,
+    x: bounds.right - OVERLAY_HANDLE_W,
+    y: bounds.bottom - OVERLAY_HANDLE_H,
   }
+}
+
+async function readOverlayBoundsForPosition(
+  win: WebviewWindow,
+  position: OverlayPosition,
+  width: number,
+  height: number,
+): Promise<OverlayBounds> {
+  try {
+    const scaleFactor = await win.scaleFactor()
+    const center = new LogicalPosition(position.x + width / 2, position.y + height / 2).toPhysical(scaleFactor)
+    const monitor = await monitorFromPoint(center.x, center.y) ?? await primaryMonitor()
+    if (monitor) {
+      const topLeft = monitor.workArea.position.toLogical(monitor.scaleFactor)
+      const size = monitor.workArea.size.toLogical(monitor.scaleFactor)
+      return {
+        left: topLeft.x,
+        top: topLeft.y,
+        right: topLeft.x + size.width,
+        bottom: topLeft.y + size.height,
+      }
+    }
+  } catch (err) {
+    console.error('failed to read overlay monitor bounds', err)
+  }
+
+  return defaultOverlayBounds()
 }
 
 export function DropHandle() {
@@ -118,9 +152,13 @@ export function DropHandle() {
   const pointerInsidePanelRef = useRef(false)
   const draggingFileRef = useRef(false)
   const closeTimerRef = useRef<number | null>(null)
+  const snapTimerRef = useRef<number | null>(null)
   const suppressHoverUntilRef = useRef(0)
+  const handleEdgeRef = useRef<OverlayEdge>('right')
+  const snappingHandleRef = useRef(false)
   const windowOperationRef = useRef<Promise<void>>(Promise.resolve())
   const [draggingFile, setDraggingFile] = useState(false)
+  const [handleEdge, setHandleEdge] = useState<OverlayEdge>('right')
 
   const getPanel = useCallback(async () => {
     if (panelRef.current) return panelRef.current
@@ -145,6 +183,36 @@ export function DropHandle() {
     }
   }, [])
 
+  const clearSnapTimer = useCallback(() => {
+    if (snapTimerRef.current !== null) {
+      window.clearTimeout(snapTimerRef.current)
+      snapTimerRef.current = null
+    }
+  }, [])
+
+  const rememberHandlePlacement = useCallback((placement: OverlayHandlePlacement) => {
+    handlePositionRef.current = { x: placement.x, y: placement.y }
+    handleEdgeRef.current = placement.edge
+    setHandleEdge(placement.edge)
+  }, [])
+
+  const snapHandleToNearestEdge = useCallback(async (position: OverlayPosition) => {
+    const currentSize = handleSizeForEdge(handleEdgeRef.current)
+    const bounds = await readOverlayBoundsForPosition(win, position, currentSize.width, currentSize.height)
+    const placement = nearestHandlePlacement(position, bounds, currentSize)
+    rememberHandlePlacement(placement)
+    snappingHandleRef.current = true
+    try {
+      await win.setSize(new LogicalSize(placement.width, placement.height))
+      await win.setPosition(new LogicalPosition(placement.x, placement.y))
+    } finally {
+      window.setTimeout(() => {
+        snappingHandleRef.current = false
+      }, 80)
+    }
+    return placement
+  }, [rememberHandlePlacement, win])
+
   const openPanel = useCallback((fromFileDrag = false) => {
     clearCloseTimer()
     if (panelOpenRef.current) return Promise.resolve()
@@ -156,8 +224,14 @@ export function DropHandle() {
         const handlePosition = await readLogicalWindowPosition(win)
         if (!panel) throw new Error('drop panel window is unavailable')
 
-        handlePositionRef.current = handlePosition
-        const panelPosition = panelPositionFromHandle(handlePosition)
+        const currentSize = handleSizeForEdge(handleEdgeRef.current)
+        const handleBounds = await readOverlayBoundsForPosition(win, handlePosition, currentSize.width, currentSize.height)
+        const handlePlacement = nearestHandlePlacement(handlePosition, handleBounds, currentSize)
+        rememberHandlePlacement(handlePlacement)
+        const panelPosition = clampPanelPosition(
+          panelPositionFromHandle(handlePlacement, handlePlacement.edge),
+          handleBounds,
+        )
         await panel.setPosition(new LogicalPosition(panelPosition.x, panelPosition.y))
         await panel.show()
         // The panel occupies the handle area after it is shown, so the
@@ -171,7 +245,7 @@ export function DropHandle() {
         console.error('failed to open drop panel window', err)
       }
     })
-  }, [clearCloseTimer, enqueueWindowOperation, getPanel, win])
+  }, [clearCloseTimer, enqueueWindowOperation, getPanel, rememberHandlePlacement, win])
 
   const closePanel = useCallback(() => {
     clearCloseTimer()
@@ -186,14 +260,16 @@ export function DropHandle() {
         if (panel) {
           const panelPosition = await readLogicalWindowPosition(panel).catch(() => null)
           if (panelPosition) {
-            handlePositionRef.current = handlePositionFromPanel(panelPosition)
+            const rawHandlePosition = handlePositionFromPanel(panelPosition)
+            const bounds = await readOverlayBoundsForPosition(panel, rawHandlePosition, OVERLAY_HANDLE_W, OVERLAY_HANDLE_H)
+            rememberHandlePlacement(nearestHandlePlacement(rawHandlePosition, bounds))
           }
           await emitOverlayEvent(DROP_PANEL_LABEL, OVERLAY_EVENT_PANEL_CLOSE)
           await panel.hide()
         }
 
         const handlePosition = handlePositionRef.current ?? initialHandlePosition()
-        await win.setPosition(new LogicalPosition(handlePosition.x, handlePosition.y))
+        await snapHandleToNearestEdge(handlePosition)
         await win.show()
         suppressHoverUntilRef.current = Date.now() + 450
         setDraggingFile(false)
@@ -202,7 +278,7 @@ export function DropHandle() {
         console.error('failed to close drop panel window', err)
       }
     })
-  }, [clearCloseTimer, enqueueWindowOperation, getPanel, win])
+  }, [clearCloseTimer, enqueueWindowOperation, getPanel, rememberHandlePlacement, snapHandleToNearestEdge, win])
 
   const scheduleClose = useCallback((delay = 360) => {
     clearCloseTimer()
@@ -218,10 +294,9 @@ export function DropHandle() {
 
   useEffect(() => {
     const position = initialHandlePosition()
-    handlePositionRef.current = position
     void (async () => {
       try {
-        await win.setPosition(new LogicalPosition(position.x, position.y))
+        await snapHandleToNearestEdge(position)
         await win.show()
       } catch (err) {
         console.error('failed to initialize drop handle window', err)
@@ -230,8 +305,44 @@ export function DropHandle() {
 
     return () => {
       clearCloseTimer()
+      clearSnapTimer()
     }
-  }, [clearCloseTimer, win])
+  }, [clearCloseTimer, clearSnapTimer, snapHandleToNearestEdge, win])
+
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+
+    void (async () => {
+      try {
+        const handler = await win.onMoved(async (event) => {
+          if (disposed || panelOpenRef.current || snappingHandleRef.current) return
+          const scaleFactor = await win.scaleFactor()
+          const position = event.payload.toLogical(scaleFactor)
+          handlePositionRef.current = position
+          clearSnapTimer()
+          snapTimerRef.current = window.setTimeout(() => {
+            snapTimerRef.current = null
+            if (!panelOpenRef.current) {
+              void snapHandleToNearestEdge(position).catch((err) => {
+                console.error('failed to snap drop handle to nearest edge', err)
+              })
+            }
+          }, 150)
+        })
+        if (disposed) handler()
+        else unlisten = handler
+      } catch (err) {
+        console.error('failed to register drop handle move listener', err)
+      }
+    })()
+
+    return () => {
+      disposed = true
+      clearSnapTimer()
+      unlisten?.()
+    }
+  }, [clearSnapTimer, snapHandleToNearestEdge, win])
 
   useEffect(() => {
     let disposed = false
@@ -359,6 +470,43 @@ export function DropHandle() {
     return () => window.clearInterval(timer)
   }, [clearCloseTimer, getPanel, scheduleClose])
 
+  // Poll the native cursor position to open the panel when the cursor enters
+  // the handle area during an OS file drag.  During that drag the OS drag
+  // manager owns the mouse so the browser never fires mouseenter/mouseleave.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (panelOpenRef.current) return
+
+      void (async () => {
+        try {
+          const [cursor, handlePosition, scaleFactor] = await Promise.all([
+            cursorPosition(),
+            win.outerPosition(),
+            win.scaleFactor(),
+          ])
+          const currentSize = handleSizeForEdge(handleEdgeRef.current)
+          const handleWidth = currentSize.width * scaleFactor
+          const handleHeight = currentSize.height * scaleFactor
+          const inside = cursor.x >= handlePosition.x
+            && cursor.x <= handlePosition.x + handleWidth
+            && cursor.y >= handlePosition.y
+            && cursor.y <= handlePosition.y + handleHeight
+          if (inside && !pointerInsideHandleRef.current) {
+            pointerInsideHandleRef.current = true
+            clearCloseTimer()
+            if (Date.now() >= suppressHoverUntilRef.current) void openPanel()
+          } else if (!inside && pointerInsideHandleRef.current) {
+            pointerInsideHandleRef.current = false
+          }
+        } catch {
+          // ignore transient cursor position errors
+        }
+      })()
+    }, 100)
+
+    return () => window.clearInterval(timer)
+  }, [clearCloseTimer, openPanel, win])
+
   const handlePointerEnter = useCallback(() => {
     pointerInsideHandleRef.current = true
     clearCloseTimer()
@@ -378,22 +526,28 @@ export function DropHandle() {
     })
   }, [win])
 
+  const handleKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    void openPanel()
+  }, [openPanel])
+
   return (
     <div
-      className={`overlay-handle-root ${draggingFile ? 'overlay-handle-dragging' : ''}`}
-      onMouseEnter={handlePointerEnter}
-      onMouseLeave={handlePointerLeave}
+      className={`overlay-handle-root overlay-edge-${handleEdge} ${draggingFile ? 'overlay-handle-dragging' : ''}`}
     >
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         className="overlay-handle-button"
         aria-label={t('zh-CN', 'dropTitle')}
         title={t('zh-CN', 'dropTitle')}
+        onMouseEnter={handlePointerEnter}
+        onMouseLeave={handlePointerLeave}
+        onKeyDown={handleKeyDown}
         onPointerDown={startWindowDrag}
         onClick={() => void openPanel()}
-      >
-        <span className="overlay-handle-icon" aria-hidden="true">📂</span>
-      </button>
+      />
     </div>
   )
 }

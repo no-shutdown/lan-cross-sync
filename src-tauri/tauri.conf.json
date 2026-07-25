@@ -21,8 +21,8 @@
       {
         "label": "drop-handle",
         "title": "",
-        "width": 72,
-        "height": 72,
+        "width": 44,
+        "height": 12,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
@@ -34,8 +34,8 @@
       {
         "label": "drop-panel",
         "title": "",
-        "width": 248,
-        "height": 190,
+        "width": 264,
+        "height": 220,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,

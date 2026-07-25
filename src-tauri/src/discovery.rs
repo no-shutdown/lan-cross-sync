@@ -129,7 +129,12 @@ pub fn connected_peer_endpoints(registry: &PeerRegistry) -> Vec<SocketAddr> {
         .collect()
 }
 
-pub async fn announce_loop(settings: Arc<Mutex<LocalSettings>>, port: u16) -> Result<()> {
+pub async fn announce_loop(
+    settings: Arc<Mutex<LocalSettings>>,
+    registry: Arc<Mutex<PeerRegistry>>,
+    active_pairing: Arc<Mutex<Option<PairingSession>>>,
+    port: u16,
+) -> Result<()> {
     let socket = UdpSocket::bind(("0.0.0.0", 0))
         .await
         .context("failed to bind discovery UDP socket")?;
@@ -147,16 +152,35 @@ pub async fn announce_loop(settings: Arc<Mutex<LocalSettings>>, port: u16) -> Re
 
     loop {
         interval.tick().await;
-        // Re-read the local device on every tick (instead of once at
-        // startup) so a rename via `set_device_name` is picked up by the
-        // very next broadcast rather than only after an app restart.
-        let device = settings.lock().unwrap().local_device.clone();
+        // Re-read the local device and switch state on every tick (instead
+        // of once at startup) so a rename via `set_device_name`, or
+        // flipping the search switch, is picked up by the very next tick
+        // rather than only after an app restart.
+        let (device, search_enabled) = {
+            let settings = settings.lock().unwrap();
+            (settings.local_device.clone(), settings.search_enabled)
+        };
         let payload = encode_discovery(device)?;
-        for target in &targets {
+        let pairing_active = active_pairing.lock().unwrap().is_some();
+        let (paired_peers, heartbeat_targets) = {
+            let registry = registry.lock().unwrap();
+            (registry.paired(), connected_peer_endpoints(&registry))
+        };
+
+        if should_broadcast(search_enabled, pairing_active, &paired_peers) {
+            for target in &targets {
+                socket
+                    .send_to(&payload, target)
+                    .await
+                    .with_context(|| format!("failed to send discovery packet to {target}"))?;
+            }
+        }
+
+        for endpoint in heartbeat_targets {
             socket
-                .send_to(&payload, target)
+                .send_to(&payload, endpoint)
                 .await
-                .with_context(|| format!("failed to send discovery packet to {target}"))?;
+                .with_context(|| format!("failed to send discovery heartbeat to {endpoint}"))?;
         }
     }
 }

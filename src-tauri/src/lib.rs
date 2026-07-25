@@ -145,9 +145,16 @@ pub fn run() {
 
             if advertising {
                 let announce_settings = settings.clone();
+                let announce_registry = registry.clone();
+                let announce_active_pairing = active_pairing.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(err) =
-                        discovery::announce_loop(announce_settings, DEFAULT_DISCOVERY_PORT).await
+                    if let Err(err) = discovery::announce_loop(
+                        announce_settings,
+                        announce_registry,
+                        announce_active_pairing,
+                        DEFAULT_DISCOVERY_PORT,
+                    )
+                    .await
                     {
                         tracing::error!(?err, "LAN discovery announcer stopped");
                     }

@@ -9,6 +9,7 @@ const messages = {
     cancel: '取消',
     noActivePairing: '当前没有有效配对码',
     pairingCodeHint: '在另一台设备输入此配对码',
+    pairingRequiresDiscoverable: '需要先在网络状态区域打开"可被发现"才能生成配对码',
     pairedDevices: '已配对设备',
     noPairedDevices: '还没有已配对设备',
     discoveredDevices: '发现的设备',
@@ -82,6 +83,7 @@ const messages = {
     errorInvalidCode: '配对码不正确',
     errorExpiredCode: '配对码已过期',
     errorUnpairedPeer: '设备尚未完成配对',
+    errorDiscoverableDisabled: '需要先打开"可被发现"',
   },
   'en-US': {
     appName: 'LAN Cross Sync',
@@ -91,6 +93,7 @@ const messages = {
     cancel: 'Cancel',
     noActivePairing: 'No active pairing code',
     pairingCodeHint: 'Enter this code on the other device',
+    pairingRequiresDiscoverable: 'Turn on "Discoverable" in the network status area first to generate a pairing code',
     pairedDevices: 'Paired devices',
     noPairedDevices: 'No paired devices yet',
     discoveredDevices: 'Discovered devices',
@@ -164,6 +167,7 @@ const messages = {
     errorInvalidCode: 'The pairing code is incorrect',
     errorExpiredCode: 'The pairing code has expired',
     errorUnpairedPeer: 'The device has not completed pairing',
+    errorDiscoverableDisabled: 'Turn on "Discoverable" first',
   },
 } as const
 

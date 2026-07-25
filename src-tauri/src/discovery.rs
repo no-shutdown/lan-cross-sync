@@ -1,7 +1,7 @@
 use crate::{
     commands::NetworkStatus,
-    domain::{DeviceId, DeviceInfo, LocalSettings, PairedPeer, PeerConnectionState},
-    pairing::{PairingRuntime, PairingSession},
+    domain::{DeviceId, DeviceInfo, LocalSettings, PeerConnectionState},
+    pairing::PairingRuntime,
     protocol::{
         decode_message, encode_message, DiscoveryPacket, LanMessage, PairingConfirm,
         PairingRequest, PairingResponse, PROTOCOL_VERSION,
@@ -99,23 +99,6 @@ pub fn apply_discovery_packet_at(
     Ok(true)
 }
 
-/// Whether this device should broadcast a discovery packet to the whole
-/// subnet on this tick. Steady-state (discoverable switch off, nobody
-/// actively pairing, every paired peer already connected) is the only case
-/// that returns false — everything else needs the wider reach a broadcast
-/// gives to be found by, or to re-find, a peer.
-pub fn should_broadcast(
-    discoverable_enabled: bool,
-    pairing_active: bool,
-    paired_peers: &[PairedPeer],
-) -> bool {
-    discoverable_enabled
-        || pairing_active
-        || paired_peers
-            .iter()
-            .any(|peer| peer.state != PeerConnectionState::Connected)
-}
-
 /// Unicast heartbeat targets: every paired peer we currently believe is
 /// connected, paired with the discovery-socket address we last learned for
 /// it. Sending a plain `Discovery` packet directly to each of these keeps
@@ -134,7 +117,6 @@ pub fn connected_peer_endpoints(registry: &PeerRegistry) -> Vec<SocketAddr> {
 pub async fn announce_loop(
     settings: Arc<Mutex<LocalSettings>>,
     registry: Arc<Mutex<PeerRegistry>>,
-    active_pairing: Arc<Mutex<Option<PairingSession>>>,
     network_status: Arc<Mutex<NetworkStatus>>,
     port: u16,
 ) -> Result<()> {
@@ -164,20 +146,14 @@ pub async fn announce_loop(
             (settings.local_device.clone(), settings.discoverable_enabled)
         };
         let payload = encode_discovery(device)?;
-        let pairing_active = active_pairing
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|session| !session.is_expired());
-        let (paired_peers, heartbeat_targets) = {
+        let heartbeat_targets = {
             let registry = registry.lock().unwrap();
-            (registry.paired(), connected_peer_endpoints(&registry))
+            connected_peer_endpoints(&registry)
         };
 
-        let is_broadcasting = should_broadcast(discoverable_enabled, pairing_active, &paired_peers);
-        network_status.lock().unwrap().broadcasting = is_broadcasting;
+        network_status.lock().unwrap().broadcasting = discoverable_enabled;
 
-        if is_broadcasting {
+        if discoverable_enabled {
             for target in &targets {
                 socket
                     .send_to(&payload, target)
@@ -484,46 +460,6 @@ mod tests {
 
         assert_eq!(*addr.ip(), DISCOVERY_BROADCAST_ADDR);
         assert_eq!(addr.port(), 45731);
-    }
-
-    fn paired_peer_with_state(state: PeerConnectionState) -> PairedPeer {
-        PairedPeer {
-            device: DeviceInfo::new_local("MacBook", 45731),
-            receive_clipboard: true,
-            send_clipboard: true,
-            is_default_file_target: false,
-            state,
-        }
-    }
-
-    #[test]
-    fn should_broadcast_when_discoverable_enabled() {
-        assert!(should_broadcast(true, false, &[]));
-    }
-
-    #[test]
-    fn should_broadcast_when_pairing_active() {
-        assert!(should_broadcast(false, true, &[]));
-    }
-
-    #[test]
-    fn should_broadcast_when_a_paired_peer_is_not_connected() {
-        let peers = vec![
-            paired_peer_with_state(PeerConnectionState::Connected),
-            paired_peer_with_state(PeerConnectionState::Offline),
-        ];
-        assert!(should_broadcast(false, false, &peers));
-    }
-
-    #[test]
-    fn should_not_broadcast_in_steady_state() {
-        let peers = vec![paired_peer_with_state(PeerConnectionState::Connected)];
-        assert!(!should_broadcast(false, false, &peers));
-    }
-
-    #[test]
-    fn should_not_broadcast_with_no_paired_peers_and_switch_off() {
-        assert!(!should_broadcast(false, false, &[]));
     }
 
     #[test]

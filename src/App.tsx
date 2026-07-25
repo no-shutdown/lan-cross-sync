@@ -862,6 +862,7 @@ function backendError(locale: Locale, err: unknown, fallback: string): string {
     expired_code: 'errorExpiredCode',
     unpaired_peer: 'errorUnpairedPeer',
     invalid_device_name: 'errorInvalidDeviceName',
+    discoverable_disabled: 'errorDiscoverableDisabled',
   }
   return known[raw] ? t(locale, known[raw]) : raw
 }
@@ -1531,12 +1532,24 @@ export default function App() {
         <div className="panel-title">
           <div>
             <h2>{t(locale, 'pairing')}</h2>
-            <p>{dashboard.active_pairing_code ? t(locale, 'pairingCodeHint') : t(locale, 'noActivePairing')}</p>
+            <p>
+              {dashboard.active_pairing_code
+                ? t(locale, 'pairingCodeHint')
+                : dashboard.settings.discoverable_enabled
+                  ? t(locale, 'noActivePairing')
+                  : t(locale, 'pairingRequiresDiscoverable')}
+            </p>
           </div>
           {dashboard.active_pairing_code ? (
             <button onClick={() => void stopPairing()}>{t(locale, 'cancel')}</button>
           ) : (
-            <button className="primary" onClick={() => void beginPairing()}>{t(locale, 'startPairing')}</button>
+            <button
+              className="primary"
+              disabled={!dashboard.settings.discoverable_enabled}
+              onClick={() => void beginPairing()}
+            >
+              {t(locale, 'startPairing')}
+            </button>
           )}
         </div>
         {dashboard.active_pairing_code && <div className="pairing-code">{dashboard.active_pairing_code}</div>}

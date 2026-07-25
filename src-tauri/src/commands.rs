@@ -172,6 +172,9 @@ pub fn set_autostart_enabled(_app: tauri::AppHandle, _enabled: bool) -> AppResul
 
 #[tauri::command]
 pub fn start_pairing(state: State<'_, AppState>) -> AppResult<String> {
+    if !state.settings.lock().unwrap().discoverable_enabled {
+        return Err(AppError::Message("discoverable_disabled".to_string()));
+    }
     let session = PairingSession::new();
     let code = session.code.clone();
     *state.active_pairing.lock().unwrap() = Some(session);
@@ -293,6 +296,12 @@ pub fn set_discoverable_enabled(
     next.discoverable_enabled = enabled;
     state.settings_store.save(&next)?;
     *settings = next.clone();
+    if !enabled {
+        // A pairing code is only findable while discoverable — cancel any
+        // in-progress session rather than leave it showing a code nobody
+        // can ever scan.
+        *state.active_pairing.lock().unwrap() = None;
+    }
     Ok(next)
 }
 

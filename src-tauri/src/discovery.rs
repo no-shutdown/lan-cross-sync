@@ -85,6 +85,7 @@ pub fn apply_discovery_packet_at(
     local_device_id: &DeviceId,
     source: SocketAddr,
     registry: &mut PeerRegistry,
+    discover_new_devices: bool,
 ) -> Result<bool> {
     let Some(device) = decode_discovery(bytes)? else {
         return Ok(false);
@@ -94,21 +95,21 @@ pub fn apply_discovery_packet_at(
         return Ok(false);
     }
 
-    registry.mark_discovered_at(device, source);
+    registry.mark_discovered_at(device, source, discover_new_devices);
     Ok(true)
 }
 
 /// Whether this device should broadcast a discovery packet to the whole
-/// subnet on this tick. Steady-state (search switch off, nobody actively
-/// pairing, every paired peer already connected) is the only case that
-/// returns false — everything else needs the wider reach a broadcast gives
-/// to be found by, or to re-find, a peer.
+/// subnet on this tick. Steady-state (discoverable switch off, nobody
+/// actively pairing, every paired peer already connected) is the only case
+/// that returns false — everything else needs the wider reach a broadcast
+/// gives to be found by, or to re-find, a peer.
 pub fn should_broadcast(
-    search_enabled: bool,
+    discoverable_enabled: bool,
     pairing_active: bool,
     paired_peers: &[PairedPeer],
 ) -> bool {
-    search_enabled
+    discoverable_enabled
         || pairing_active
         || paired_peers
             .iter()
@@ -119,8 +120,8 @@ pub fn should_broadcast(
 /// connected, paired with the discovery-socket address we last learned for
 /// it. Sending a plain `Discovery` packet directly to each of these keeps
 /// their copy of our `DeviceInfo` (name, etc.) fresh without ever touching
-/// the subnet broadcast address, so it works even while the search switch
-/// is off.
+/// the subnet broadcast address, so it works even while the discoverable
+/// switch is off.
 pub fn connected_peer_endpoints(registry: &PeerRegistry) -> Vec<SocketAddr> {
     registry
         .paired()
@@ -156,11 +157,11 @@ pub async fn announce_loop(
         interval.tick().await;
         // Re-read the local device and switch state on every tick (instead
         // of once at startup) so a rename via `set_device_name`, or
-        // flipping the search switch, is picked up by the very next tick
-        // rather than only after an app restart.
-        let (device, search_enabled) = {
+        // flipping the discoverable switch, is picked up by the very next
+        // tick rather than only after an app restart.
+        let (device, discoverable_enabled) = {
             let settings = settings.lock().unwrap();
-            (settings.local_device.clone(), settings.search_enabled)
+            (settings.local_device.clone(), settings.discoverable_enabled)
         };
         let payload = encode_discovery(device)?;
         let pairing_active = active_pairing
@@ -173,7 +174,7 @@ pub async fn announce_loop(
             (registry.paired(), connected_peer_endpoints(&registry))
         };
 
-        let is_broadcasting = should_broadcast(search_enabled, pairing_active, &paired_peers);
+        let is_broadcasting = should_broadcast(discoverable_enabled, pairing_active, &paired_peers);
         network_status.lock().unwrap().broadcasting = is_broadcasting;
 
         if is_broadcasting {
@@ -227,8 +228,15 @@ async fn handle_lan_message(
 ) -> Result<()> {
     pairing.requests.lock().unwrap().clear_expired();
     {
+        let search_enabled = pairing.settings.lock().unwrap().search_enabled;
         let mut registry = pairing.registry.lock().unwrap();
-        if apply_discovery_packet_at(bytes, &pairing.local_device.id, source, &mut registry)? {
+        if apply_discovery_packet_at(
+            bytes,
+            &pairing.local_device.id,
+            source,
+            &mut registry,
+            search_enabled,
+        )? {
             return Ok(());
         }
     }
@@ -438,6 +446,7 @@ mod tests {
             local_device: local_device.clone(),
             paired_peers: Vec::new(),
             ui_locale: "zh-CN".to_string(),
+            discoverable_enabled: true,
             search_enabled: true,
         };
         PairingRuntime::new(
@@ -488,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn should_broadcast_when_search_enabled() {
+    fn should_broadcast_when_discoverable_enabled() {
         assert!(should_broadcast(true, false, &[]));
     }
 
@@ -537,7 +546,7 @@ mod tests {
             state: PeerConnectionState::Offline,
         });
         let source: SocketAddr = "192.0.2.20:54321".parse().unwrap();
-        registry.mark_discovered_at(connected.clone(), source);
+        registry.mark_discovered_at(connected.clone(), source, true);
 
         let endpoints = connected_peer_endpoints(&registry);
 
@@ -570,7 +579,7 @@ mod tests {
             state: PeerConnectionState::Offline,
         });
         let source: SocketAddr = "192.0.2.30:54321".parse().unwrap();
-        registry.mark_discovered_at(offline, source);
+        registry.mark_discovered_at(offline, source, true);
 
         let endpoints = connected_peer_endpoints(&registry);
 
@@ -641,10 +650,25 @@ mod tests {
 
         let source: SocketAddr = "192.0.2.20:45731".parse().unwrap();
         let applied =
-            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
+            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry, true).unwrap();
 
         assert!(applied);
         assert_eq!(registry.discovered(), vec![remote]);
+    }
+
+    #[test]
+    fn apply_discovery_packet_skips_new_device_when_search_disabled() {
+        let local = DeviceInfo::new_local("Windows Desk", 45731);
+        let remote = DeviceInfo::new_local("MacBook", 45731);
+        let encoded = encode_discovery(remote).unwrap();
+        let mut registry = PeerRegistry::new();
+
+        let source: SocketAddr = "192.0.2.20:45731".parse().unwrap();
+        let applied =
+            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry, false).unwrap();
+
+        assert!(applied);
+        assert!(registry.discovered().is_empty());
     }
 
     #[test]
@@ -655,7 +679,7 @@ mod tests {
 
         let source: SocketAddr = "192.0.2.20:45731".parse().unwrap();
         let applied =
-            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
+            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry, true).unwrap();
 
         assert!(!applied);
         assert!(registry.discovered().is_empty());
@@ -670,7 +694,7 @@ mod tests {
         let mut registry = PeerRegistry::new();
 
         let applied =
-            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
+            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry, true).unwrap();
 
         assert!(applied);
         assert_eq!(
@@ -698,7 +722,7 @@ mod tests {
 
         let source: SocketAddr = "192.0.2.20:45731".parse().unwrap();
         let applied =
-            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry).unwrap();
+            apply_discovery_packet_at(&encoded, &local.id, source, &mut registry, true).unwrap();
 
         assert!(applied);
         assert!(registry.discovered().is_empty());

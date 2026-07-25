@@ -29,6 +29,10 @@ export function setUiLocale(locale: Locale): Promise<LocalSettings> {
   return invoke('set_ui_locale', { locale })
 }
 
+export function setDiscoverableEnabled(enabled: boolean): Promise<LocalSettings> {
+  return invoke('set_discoverable_enabled', { enabled })
+}
+
 export function setSearchEnabled(enabled: boolean): Promise<LocalSettings> {
   return invoke('set_search_enabled', { enabled })
 }

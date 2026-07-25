@@ -55,12 +55,26 @@ pub struct LocalSettings {
     pub paired_peers: Vec<PairedPeer>,
     #[serde(default = "default_ui_locale")]
     pub ui_locale: String,
+    /// Whether this device announces itself to the subnet (the send side of
+    /// discovery) — i.e. whether other devices can find it. Independent of
+    /// `search_enabled`, which controls the receive side.
+    #[serde(default = "default_discoverable_enabled")]
+    pub discoverable_enabled: bool,
+    /// Whether newly-seen, not-yet-paired devices get added to this
+    /// device's "discovered devices" list (the receive side of discovery).
+    /// Already-paired peers are always tracked/updated regardless of this
+    /// setting, so pairing-in-progress and reconnecting an offline paired
+    /// peer are unaffected by turning this off.
     #[serde(default = "default_search_enabled")]
     pub search_enabled: bool,
 }
 
 pub fn default_ui_locale() -> String {
     "zh-CN".to_string()
+}
+
+pub fn default_discoverable_enabled() -> bool {
+    true
 }
 
 pub fn default_search_enabled() -> bool {
@@ -185,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn old_settings_get_default_search_enabled_when_decoded() {
+    fn old_settings_get_default_discoverable_and_search_enabled_when_decoded() {
         let raw = r#"{
             "local_device": {
                 "id": "00000000-0000-0000-0000-000000000001",
@@ -200,21 +214,24 @@ mod tests {
 
         let settings: LocalSettings = serde_json::from_str(raw).unwrap();
 
+        assert!(settings.discoverable_enabled);
         assert!(settings.search_enabled);
     }
 
     #[test]
-    fn search_enabled_round_trips_through_serialization() {
+    fn discoverable_and_search_enabled_round_trip_independently_through_serialization() {
         let settings = LocalSettings {
             local_device: DeviceInfo::new_local("Windows Desk", 45731),
             paired_peers: Vec::new(),
             ui_locale: default_ui_locale(),
-            search_enabled: false,
+            discoverable_enabled: false,
+            search_enabled: true,
         };
 
         let json = serde_json::to_string(&settings).unwrap();
         let decoded: LocalSettings = serde_json::from_str(&json).unwrap();
 
-        assert!(!decoded.search_enabled);
+        assert!(!decoded.discoverable_enabled);
+        assert!(decoded.search_enabled);
     }
 }

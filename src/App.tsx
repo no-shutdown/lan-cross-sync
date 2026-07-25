@@ -17,6 +17,7 @@ import {
   setAutostartEnabled,
   setDefaultFileTarget,
   setDeviceName,
+  setDiscoverableEnabled,
   setReceiveClipboard,
   setSearchEnabled,
   setSendClipboard,
@@ -1330,6 +1331,16 @@ export default function App() {
     }
   }
 
+  async function toggleDiscoverableEnabled() {
+    if (!dashboard) return
+    try {
+      await setDiscoverableEnabled(!dashboard.settings.discoverable_enabled)
+      await refresh()
+    } catch (err) {
+      setError(backendError(locale, err, t(locale, 'errorTransfer')))
+    }
+  }
+
   async function toggleSearchEnabled() {
     if (!dashboard) return
     try {
@@ -1475,6 +1486,24 @@ export default function App() {
             <span className="switch">
               <input
                 type="checkbox"
+                checked={dashboard.settings.discoverable_enabled}
+                onChange={() => void toggleDiscoverableEnabled()}
+              />
+              <span className="switch-track" />
+            </span>
+            <span className="switch-label">
+              <span>{t(locale, 'discoverable')}</span>
+              <span className="switch-live-state">
+                {dashboard.network_status.broadcasting
+                  ? t(locale, 'broadcastingNow')
+                  : t(locale, 'notBroadcastingNow')}
+              </span>
+            </span>
+          </label>
+          <label className="switch-row">
+            <span className="switch">
+              <input
+                type="checkbox"
                 checked={dashboard.settings.search_enabled}
                 onChange={() => void toggleSearchEnabled()}
               />
@@ -1482,11 +1511,7 @@ export default function App() {
             </span>
             <span className="switch-label">
               <span>{t(locale, 'searchDevices')}</span>
-              <span className="switch-live-state">
-                {dashboard.network_status.broadcasting
-                  ? t(locale, 'broadcastingNow')
-                  : t(locale, 'notBroadcastingNow')}
-              </span>
+              <span className="switch-live-state">{t(locale, 'searchDevicesHint')}</span>
             </span>
           </label>
         </div>

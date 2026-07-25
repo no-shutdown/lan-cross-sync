@@ -152,7 +152,7 @@ impl PairingRuntime {
         drop(settings);
 
         let mut registry = self.registry.lock().unwrap();
-        registry.mark_discovered_at(device, endpoint);
+        registry.mark_discovered_at(device, endpoint, true);
         registry.set_paired(peer);
         Ok(())
     }

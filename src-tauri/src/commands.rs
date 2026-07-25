@@ -260,6 +260,23 @@ pub fn set_ui_locale(state: State<'_, AppState>, locale: String) -> AppResult<Lo
     Ok(next)
 }
 
+/// Controls whether this device announces itself to the subnet (the send
+/// side of discovery) — i.e. whether other devices can find it.
+#[tauri::command]
+pub fn set_discoverable_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> AppResult<LocalSettings> {
+    let mut settings = state.settings.lock().unwrap();
+    let mut next = settings.clone();
+    next.discoverable_enabled = enabled;
+    state.settings_store.save(&next)?;
+    *settings = next.clone();
+    Ok(next)
+}
+
+/// Controls whether newly-seen, not-yet-paired devices get added to this
+/// device's "discovered devices" list (the receive side of discovery).
 #[tauri::command]
 pub fn set_search_enabled(state: State<'_, AppState>, enabled: bool) -> AppResult<LocalSettings> {
     let mut settings = state.settings.lock().unwrap();
@@ -468,6 +485,7 @@ mod tests {
             local_device: DeviceInfo::new_local("Windows Desk", 45731),
             paired_peers: vec![peer.clone()],
             ui_locale: "zh-CN".to_string(),
+            discoverable_enabled: true,
             search_enabled: true,
         }));
         store.save(&settings.lock().unwrap()).unwrap();
@@ -506,6 +524,7 @@ mod tests {
             local_device: DeviceInfo::new_local("Windows Desk", 45731),
             paired_peers: peers,
             ui_locale: "zh-CN".to_string(),
+            discoverable_enabled: true,
             search_enabled: true,
         }
     }

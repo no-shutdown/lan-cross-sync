@@ -35,10 +35,23 @@ impl PeerRegistry {
 
     #[cfg(test)]
     pub fn mark_discovered(&mut self, device: DeviceInfo) {
-        self.upsert_discovered(device);
+        self.upsert_discovered(device, true);
     }
 
-    pub fn mark_discovered_at(&mut self, device: DeviceInfo, source: SocketAddr) {
+    /// Records where a device was last seen and, if it isn't already
+    /// paired, adds it to the discovered-devices list — unless
+    /// `discover_new_devices` is false, in which case a not-yet-paired
+    /// device's endpoint is still tracked (harmless, and needed if it gets
+    /// paired later some other way) but it's not surfaced as newly
+    /// discovered. An already-paired device is always updated regardless:
+    /// this flag only gates *new* discoveries, not reconnecting or
+    /// refreshing a peer you're already paired with.
+    pub fn mark_discovered_at(
+        &mut self,
+        device: DeviceInfo,
+        source: SocketAddr,
+        discover_new_devices: bool,
+    ) {
         let ip = source.ip();
         self.last_seen.insert(device.id.clone(), Instant::now());
         self.discovery_endpoints.insert(
@@ -47,12 +60,14 @@ impl PeerRegistry {
         );
         self.transport_endpoints
             .insert(device.id.clone(), SocketAddr::new(ip, device.port));
-        self.upsert_discovered(device);
+        self.upsert_discovered(device, discover_new_devices);
     }
 
-    fn upsert_discovered(&mut self, device: DeviceInfo) {
+    fn upsert_discovered(&mut self, device: DeviceInfo, discover_new_devices: bool) {
         if !self.paired.contains_key(&device.id) {
-            self.discovered.insert(device.id.clone(), device);
+            if discover_new_devices {
+                self.discovered.insert(device.id.clone(), device);
+            }
         } else if let Some(peer) = self.paired.get_mut(&device.id) {
             peer.device = device;
             if matches!(
@@ -313,7 +328,7 @@ mod tests {
         let device_id = device.id.clone();
         let source: SocketAddr = "192.0.2.10:54321".parse().unwrap();
 
-        registry.mark_discovered_at(device, source);
+        registry.mark_discovered_at(device, source, true);
 
         assert_eq!(
             registry.discovery_endpoint(&device_id),
@@ -338,12 +353,49 @@ mod tests {
         let source: SocketAddr = "192.0.2.10:54321".parse().unwrap();
         let seen_at = Instant::now();
 
-        registry.mark_discovered_at(device, source);
+        registry.mark_discovered_at(device, source, true);
         registry.last_seen.insert(device_id.clone(), seen_at);
         registry.prune_expired(seen_at + Duration::from_secs(11), Duration::from_secs(10));
 
         assert!(registry.discovered().is_empty());
         assert_eq!(registry.discovery_endpoint(&device_id), None);
         assert_eq!(registry.transport_endpoint(&device_id), None);
+    }
+
+    #[test]
+    fn mark_discovered_at_skips_new_unpaired_device_when_search_disabled() {
+        let mut registry = PeerRegistry::new();
+        let device = DeviceInfo::new_local("MacBook", 45731);
+        let source: SocketAddr = "192.0.2.10:54321".parse().unwrap();
+
+        registry.mark_discovered_at(device, source, false);
+
+        assert!(registry.discovered().is_empty());
+    }
+
+    #[test]
+    fn mark_discovered_at_still_updates_a_paired_device_when_search_disabled() {
+        let mut registry = PeerRegistry::new();
+        let device = DeviceInfo::new_local("MacBook", 45731);
+        registry.set_paired(PairedPeer {
+            device: device.clone(),
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Offline,
+        });
+        let mut renamed = device.clone();
+        renamed.name = "MacBook Pro".to_string();
+        let source: SocketAddr = "192.0.2.10:54321".parse().unwrap();
+
+        registry.mark_discovered_at(renamed, source, false);
+
+        let peer = &registry.paired()[0];
+        assert_eq!(peer.device.name, "MacBook Pro");
+        assert_eq!(peer.state, PeerConnectionState::Discovered);
+        assert_eq!(
+            registry.discovery_endpoint(&device.id),
+            Some("192.0.2.10:45731".parse().unwrap())
+        );
     }
 }

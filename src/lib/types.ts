@@ -23,6 +23,7 @@ export interface LocalSettings {
   local_device: DeviceInfo
   paired_peers: PairedPeer[]
   ui_locale: Locale
+  discoverable_enabled: boolean
   search_enabled: boolean
 }
 

@@ -21,8 +21,8 @@
       {
         "label": "drop-handle",
         "title": "",
-        "width": 44,
-        "height": 12,
+        "width": 20,
+        "height": 52,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,

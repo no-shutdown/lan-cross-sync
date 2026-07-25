@@ -140,6 +140,23 @@ async function readOverlayBoundsForPosition(
   return defaultOverlayBounds()
 }
 
+function chevronForEdge(edge: OverlayEdge) {
+  if (edge === 'left' || edge === 'right') {
+    const d = edge === 'right' ? 'M6.5 2L2 7l4.5 5' : 'M2.5 2L7 7l-4.5 5'
+    return (
+      <svg width="9" height="14" viewBox="0 0 9 14" fill="none" aria-hidden="true" style={{ opacity: 0.75 }}>
+        <path d={d} stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    )
+  }
+  const d = edge === 'bottom' ? 'M2 6.5L7 2l5 4.5' : 'M2 2.5L7 7l5-4.5'
+  return (
+    <svg width="14" height="9" viewBox="0 0 14 9" fill="none" aria-hidden="true" style={{ opacity: 0.75 }}>
+      <path d={d} stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function DropHandle() {
   useTransparentOverlayDocument()
 
@@ -535,6 +552,8 @@ export function DropHandle() {
   return (
     <div
       className={`overlay-handle-root overlay-edge-${handleEdge} ${draggingFile ? 'overlay-handle-dragging' : ''}`}
+      onMouseEnter={handlePointerEnter}
+      onMouseLeave={handlePointerLeave}
     >
       <div
         role="button"
@@ -547,7 +566,9 @@ export function DropHandle() {
         onKeyDown={handleKeyDown}
         onPointerDown={startWindowDrag}
         onClick={() => void openPanel()}
-      />
+      >
+        {chevronForEdge(handleEdge)}
+      </div>
     </div>
   )
 }
@@ -770,7 +791,9 @@ export function DropPanel() {
         </select>
         <div className={`overlay-dropzone ${dragOver ? 'overlay-dropzone-active' : ''}`}>
           <span className="overlay-drop-icon">📂</span>
-          <span className="overlay-drop-label">{t(locale, 'dropTitle')}</span>
+          <span className="overlay-drop-label">
+            {dragOver ? t(locale, 'dropRelease') : t(locale, 'dropTitle')}
+          </span>
         </div>
         {error && <div className="overlay-error">{error}</div>}
       </section>

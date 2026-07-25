@@ -1,12 +1,14 @@
 export const DROP_HANDLE_LABEL = 'drop-handle'
 export const DROP_PANEL_LABEL = 'drop-panel'
 
-export const OVERLAY_HANDLE_LENGTH = 44
-export const OVERLAY_HANDLE_THICKNESS = 12
-export const OVERLAY_HANDLE_W = OVERLAY_HANDLE_LENGTH
-export const OVERLAY_HANDLE_H = OVERLAY_HANDLE_THICKNESS
-export const OVERLAY_PANEL_W = 264
-export const OVERLAY_PANEL_H = 220
+export const OVERLAY_HANDLE_LENGTH = 52
+export const OVERLAY_HANDLE_THICKNESS = 20
+
+// Derived aliases for convenience
+export const OVERLAY_HANDLE_W = OVERLAY_HANDLE_THICKNESS
+export const OVERLAY_HANDLE_H = OVERLAY_HANDLE_LENGTH
+export const OVERLAY_PANEL_W = 248
+export const OVERLAY_PANEL_H = 190
 export const OVERLAY_EDGE_MARGIN = 6
 
 export const OVERLAY_EVENT_PANEL_ENTER = 'overlay:panel-enter'
@@ -17,11 +19,11 @@ export const OVERLAY_EVENT_DRAG_STOP = 'overlay:drag-stop'
 export const OVERLAY_EVENT_DROP_PATHS = 'overlay:drop-paths'
 export const OVERLAY_EVENT_DROP_COMPLETE = 'overlay:drop-complete'
 
+export type OverlayEdge = 'left' | 'right' | 'top' | 'bottom'
+
 export type OverlayDropPayload = {
   paths: string[]
 }
-
-export type OverlayEdge = 'left' | 'right' | 'top' | 'bottom'
 
 export type OverlayBounds = {
   left: number

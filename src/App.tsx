@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { emitTo, listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi'
@@ -103,6 +104,15 @@ async function emitOverlayEvent<T>(target: string, event: string, payload?: T) {
   } catch (err) {
     console.error(`failed to emit overlay event ${event}`, err)
   }
+}
+
+// TEMP DEBUG: remove once the Windows overlay drag-drop issue is diagnosed.
+// Mirrors to the Rust process stdout so it's visible in the `pnpm tauri dev`
+// terminal even when webview devtools aren't reachable on the frameless
+// overlay windows.
+function overlayDebugLog(msg: string) {
+  console.log(`[overlay-debug] ${msg}`)
+  void invoke('overlay_debug_log', { msg }).catch(() => {})
 }
 
 function initialHandlePosition(): OverlayPosition {
@@ -217,6 +227,7 @@ export function DropHandle() {
     const currentSize = handleSizeForEdge(handleEdgeRef.current)
     const bounds = await readOverlayBoundsForPosition(win, position, currentSize.width, currentSize.height)
     const placement = nearestHandlePlacement(position, bounds, currentSize)
+    overlayDebugLog(`snap: position=${JSON.stringify(position)} bounds=${JSON.stringify(bounds)} placement=${JSON.stringify(placement)}`)
     rememberHandlePlacement(placement)
     snappingHandleRef.current = true
     try {
@@ -231,6 +242,7 @@ export function DropHandle() {
   }, [rememberHandlePlacement, win])
 
   const openPanel = useCallback((fromFileDrag = false) => {
+    overlayDebugLog(`openPanel called fromFileDrag=${fromFileDrag}`)
     clearCloseTimer()
     if (panelOpenRef.current) return Promise.resolve()
     panelOpenRef.current = true
@@ -368,6 +380,7 @@ export function DropHandle() {
     void (async () => {
       try {
         const handler = await win.onDragDropEvent(async (event) => {
+          overlayDebugLog(`drop-handle native onDragDropEvent: ${JSON.stringify(event.payload)}`)
           if (event.payload.type === 'enter') {
             draggingFileRef.current = true
             setDraggingFile(true)
@@ -509,14 +522,15 @@ export function DropHandle() {
             && cursor.y >= handlePosition.y
             && cursor.y <= handlePosition.y + handleHeight
           if (inside && !pointerInsideHandleRef.current) {
+            overlayDebugLog(`cursor-poll: entered handle. cursor=${JSON.stringify(cursor)} handlePosition=${JSON.stringify(handlePosition)} handleSize(px)=${handleWidth}x${handleHeight} scaleFactor=${scaleFactor}`)
             pointerInsideHandleRef.current = true
             clearCloseTimer()
             if (Date.now() >= suppressHoverUntilRef.current) void openPanel()
           } else if (!inside && pointerInsideHandleRef.current) {
             pointerInsideHandleRef.current = false
           }
-        } catch {
-          // ignore transient cursor position errors
+        } catch (err) {
+          overlayDebugLog(`cursor-poll: error ${String(err)}`)
         }
       })()
     }, 100)
@@ -713,6 +727,7 @@ export function DropPanel() {
     void (async () => {
       try {
         const handler = await win.onDragDropEvent(async (event) => {
+          overlayDebugLog(`drop-panel native onDragDropEvent: ${JSON.stringify(event.payload)}`)
           if (event.payload.type === 'enter') {
             setDragOver(true)
             await emitHandleEvent(OVERLAY_EVENT_DRAG_ENTER)
@@ -1111,6 +1126,7 @@ function TransferPanel({
           }
         })
         unlistenDrop = await getCurrentWebviewWindow().onDragDropEvent((event) => {
+          overlayDebugLog(`main window native onDragDropEvent: ${JSON.stringify(event.payload)}`)
           if (event.payload.type === 'enter') setDropActive(true)
           if (event.payload.type === 'leave' || event.payload.type === 'drop') setDropActive(false)
           if (event.payload.type === 'drop') void sendPaths(event.payload.paths)

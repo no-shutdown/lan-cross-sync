@@ -36,6 +36,12 @@ const TRAY_ID: &str = "lan-cross-sync";
 const TRAY_SHOW_ID: &str = "show";
 const TRAY_QUIT_ID: &str = "quit";
 
+// TEMP DEBUG: remove once the Windows overlay drag-drop issue is diagnosed.
+#[tauri::command]
+fn overlay_debug_log(msg: String) {
+    println!("[overlay-debug] {msg}");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -291,7 +297,8 @@ pub fn run() {
             set_default_file_target,
             set_device_name,
             set_ui_locale,
-            clear_pairing
+            clear_pairing,
+            overlay_debug_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

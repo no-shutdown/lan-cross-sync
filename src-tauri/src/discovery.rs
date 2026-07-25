@@ -161,7 +161,11 @@ pub async fn announce_loop(
             (settings.local_device.clone(), settings.search_enabled)
         };
         let payload = encode_discovery(device)?;
-        let pairing_active = active_pairing.lock().unwrap().is_some();
+        let pairing_active = active_pairing
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|session| !session.is_expired());
         let (paired_peers, heartbeat_targets) = {
             let registry = registry.lock().unwrap();
             (registry.paired(), connected_peer_endpoints(&registry))
@@ -177,10 +181,9 @@ pub async fn announce_loop(
         }
 
         for endpoint in heartbeat_targets {
-            socket
-                .send_to(&payload, endpoint)
-                .await
-                .with_context(|| format!("failed to send discovery heartbeat to {endpoint}"))?;
+            if let Err(err) = socket.send_to(&payload, endpoint).await {
+                tracing::debug!(?err, %endpoint, "failed to send discovery heartbeat");
+            }
         }
     }
 }

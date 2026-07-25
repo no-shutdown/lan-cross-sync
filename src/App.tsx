@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import { emitTo, listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi'
@@ -104,15 +103,6 @@ async function emitOverlayEvent<T>(target: string, event: string, payload?: T) {
   } catch (err) {
     console.error(`failed to emit overlay event ${event}`, err)
   }
-}
-
-// TEMP DEBUG: remove once the Windows overlay drag-drop issue is diagnosed.
-// Mirrors to the Rust process stdout so it's visible in the `pnpm tauri dev`
-// terminal even when webview devtools aren't reachable on the frameless
-// overlay windows.
-function overlayDebugLog(msg: string) {
-  console.log(`[overlay-debug] ${msg}`)
-  void invoke('overlay_debug_log', { msg }).catch(() => {})
 }
 
 function initialHandlePosition(): OverlayPosition {
@@ -227,7 +217,6 @@ export function DropHandle() {
     const currentSize = handleSizeForEdge(handleEdgeRef.current)
     const bounds = await readOverlayBoundsForPosition(win, position, currentSize.width, currentSize.height)
     const placement = nearestHandlePlacement(position, bounds, currentSize)
-    overlayDebugLog(`snap: position=${JSON.stringify(position)} bounds=${JSON.stringify(bounds)} placement=${JSON.stringify(placement)}`)
     rememberHandlePlacement(placement)
     snappingHandleRef.current = true
     try {
@@ -242,7 +231,6 @@ export function DropHandle() {
   }, [rememberHandlePlacement, win])
 
   const openPanel = useCallback((fromFileDrag = false) => {
-    overlayDebugLog(`openPanel called fromFileDrag=${fromFileDrag}`)
     clearCloseTimer()
     if (panelOpenRef.current) return Promise.resolve()
     panelOpenRef.current = true
@@ -380,7 +368,6 @@ export function DropHandle() {
     void (async () => {
       try {
         const handler = await win.onDragDropEvent(async (event) => {
-          overlayDebugLog(`drop-handle native onDragDropEvent: ${JSON.stringify(event.payload)}`)
           if (event.payload.type === 'enter') {
             draggingFileRef.current = true
             setDraggingFile(true)
@@ -522,15 +509,14 @@ export function DropHandle() {
             && cursor.y >= handlePosition.y
             && cursor.y <= handlePosition.y + handleHeight
           if (inside && !pointerInsideHandleRef.current) {
-            overlayDebugLog(`cursor-poll: entered handle. cursor=${JSON.stringify(cursor)} handlePosition=${JSON.stringify(handlePosition)} handleSize(px)=${handleWidth}x${handleHeight} scaleFactor=${scaleFactor}`)
             pointerInsideHandleRef.current = true
             clearCloseTimer()
             if (Date.now() >= suppressHoverUntilRef.current) void openPanel()
           } else if (!inside && pointerInsideHandleRef.current) {
             pointerInsideHandleRef.current = false
           }
-        } catch (err) {
-          overlayDebugLog(`cursor-poll: error ${String(err)}`)
+        } catch {
+          // ignore transient cursor position errors
         }
       })()
     }, 100)
@@ -737,7 +723,6 @@ export function DropPanel() {
     void (async () => {
       try {
         const handler = await win.onDragDropEvent(async (event) => {
-          overlayDebugLog(`drop-panel native onDragDropEvent: ${JSON.stringify(event.payload)}`)
           if (event.payload.type === 'enter') {
             setDragOver(true)
             await emitHandleEvent(OVERLAY_EVENT_DRAG_ENTER)
@@ -1107,7 +1092,12 @@ function TransferPanel({
   const defaultTarget = onlinePeers.find((peer) => peer.is_default_file_target)
   const [selectedTarget, setSelectedTarget] = useState<DeviceId | ''>(defaultTarget?.device.id ?? '')
   const [dropActive, setDropActive] = useState(false)
-  const [incomingOffer, setIncomingOffer] = useState<Extract<TransferEvent, { type: 'offer' }> | null>(null)
+  // A queue, not a single value: multiple incoming offers can arrive before
+  // the user responds to the first one (e.g. several separate sends in a
+  // row), and overwriting the pending offer would silently orphan it —
+  // the sender never gets a rejection and the receiver never sees a prompt.
+  const [incomingOffers, setIncomingOffers] = useState<Array<Extract<TransferEvent, { type: 'offer' }>>>([])
+  const incomingOffer = incomingOffers[0] ?? null
 
   const targetId = selectedTarget || defaultTarget?.device.id || ''
   const target = onlinePeers.find((peer) => peer.device.id === targetId)
@@ -1132,11 +1122,24 @@ function TransferPanel({
         unlistenTransfer = await listen<TransferEvent>('transfer-event', ({ payload }) => {
           onEvent(payload)
           if (payload.type === 'offer' && payload.direction === 'receiving') {
-            setIncomingOffer(payload)
+            setIncomingOffers((prev) => prev.some((offer) => offer.transfer_id === payload.transfer_id)
+              ? prev
+              : [...prev, payload])
+            // Clicking a system notification doesn't reliably reach the app
+            // (upstream plugin-notification has no working click handler on
+            // Windows), so surface the window ourselves instead of relying
+            // on that round trip.
+            const appWindow = getCurrentWebviewWindow()
+            void appWindow.show().catch(() => {})
+            void appWindow.setFocus().catch(() => {})
+          }
+          // The sender cancelling, or the peer dropping off, removes a
+          // still-queued offer too — not just the one currently on screen.
+          if ((payload.type === 'cancelled' || payload.type === 'failed') && payload.direction === 'receiving') {
+            setIncomingOffers((prev) => prev.filter((offer) => offer.transfer_id !== payload.transfer_id))
           }
         })
         unlistenDrop = await getCurrentWebviewWindow().onDragDropEvent((event) => {
-          overlayDebugLog(`main window native onDragDropEvent: ${JSON.stringify(event.payload)}`)
           if (event.payload.type === 'enter') setDropActive(true)
           if (event.payload.type === 'leave' || event.payload.type === 'drop') setDropActive(false)
           if (event.payload.type === 'drop') void sendPaths(event.payload.paths)
@@ -1180,13 +1183,17 @@ function TransferPanel({
     }
   }
 
+  function dequeueIncoming(transferId: string) {
+    setIncomingOffers((prev) => prev.filter((offer) => offer.transfer_id !== transferId))
+  }
+
   async function acceptIncoming() {
     if (!incomingOffer) return
     try {
       const destination = await open({ directory: true, multiple: false })
       if (typeof destination !== 'string') return
       await acceptFileTransfer(incomingOffer.transfer_id, destination)
-      setIncomingOffer(null)
+      dequeueIncoming(incomingOffer.transfer_id)
     } catch (err) {
       onError(backendError(locale, err, t(locale, 'errorTransfer')))
     }
@@ -1196,7 +1203,7 @@ function TransferPanel({
     if (!incomingOffer) return
     try {
       await cancelFileTransfer(incomingOffer.transfer_id)
-      setIncomingOffer(null)
+      dequeueIncoming(incomingOffer.transfer_id)
     } catch (err) {
       onError(backendError(locale, err, t(locale, 'errorTransfer')))
     }
@@ -1242,6 +1249,9 @@ function TransferPanel({
               {incomingOffer.peer.name} · {incomingOffer.manifest.entries.length} items ·{' '}
               {formatBytes(incomingOffer.manifest.total_bytes)}
             </span>
+            {incomingOffers.length > 1 && (
+              <span>{t(locale, 'incomingOfferQueued').replace('{count}', String(incomingOffers.length - 1))}</span>
+            )}
           </div>
           <div className="inline-actions">
             <button className="primary" onClick={() => void acceptIncoming()}>{t(locale, 'accept')}</button>

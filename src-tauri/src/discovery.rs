@@ -114,6 +114,21 @@ pub fn should_broadcast(
             .any(|peer| peer.state != PeerConnectionState::Connected)
 }
 
+/// Unicast heartbeat targets: every paired peer we currently believe is
+/// connected, paired with the discovery-socket address we last learned for
+/// it. Sending a plain `Discovery` packet directly to each of these keeps
+/// their copy of our `DeviceInfo` (name, etc.) fresh without ever touching
+/// the subnet broadcast address, so it works even while the search switch
+/// is off.
+pub fn connected_peer_endpoints(registry: &PeerRegistry) -> Vec<SocketAddr> {
+    registry
+        .paired()
+        .into_iter()
+        .filter(|peer| peer.state == PeerConnectionState::Connected)
+        .filter_map(|peer| registry.discovery_endpoint(&peer.device.id))
+        .collect()
+}
+
 pub async fn announce_loop(settings: Arc<Mutex<LocalSettings>>, port: u16) -> Result<()> {
     let socket = UdpSocket::bind(("0.0.0.0", 0))
         .await
@@ -468,6 +483,47 @@ mod tests {
     #[test]
     fn should_not_broadcast_with_no_paired_peers_and_switch_off() {
         assert!(!should_broadcast(false, false, &[]));
+    }
+
+    #[test]
+    fn connected_peer_endpoints_includes_only_connected_devices_with_known_address() {
+        let mut registry = PeerRegistry::new();
+        let connected = DeviceInfo::new_local("MacBook", 45731);
+        let offline = DeviceInfo::new_local("Linux Desk", 45731);
+        registry.set_paired(PairedPeer {
+            device: connected.clone(),
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Connected,
+        });
+        registry.set_paired(PairedPeer {
+            device: offline,
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Offline,
+        });
+        let source: SocketAddr = "192.0.2.20:54321".parse().unwrap();
+        registry.mark_discovered_at(connected.clone(), source);
+
+        let endpoints = connected_peer_endpoints(&registry);
+
+        assert_eq!(endpoints, vec!["192.0.2.20:45731".parse().unwrap()]);
+    }
+
+    #[test]
+    fn connected_peer_endpoints_skips_connected_device_with_no_known_address() {
+        let mut registry = PeerRegistry::new();
+        registry.set_paired(PairedPeer {
+            device: DeviceInfo::new_local("MacBook", 45731),
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Connected,
+        });
+
+        assert!(connected_peer_endpoints(&registry).is_empty());
     }
 
     #[test]

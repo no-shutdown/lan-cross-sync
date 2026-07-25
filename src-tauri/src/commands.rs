@@ -100,13 +100,34 @@ pub fn get_dashboard_state(state: State<'_, AppState>) -> AppResult<DashboardSta
     let network_status = state.network_status.lock().unwrap().clone();
 
     Ok(DashboardState {
+        discovered_devices: visible_discovered_devices(settings.search_enabled, registry.discovered()),
         settings,
         paired_devices,
-        discovered_devices: registry.discovered(),
         active_pairing_code,
         pairing_error_code,
         network_status,
     })
+}
+
+/// Devices the "search other devices" switch permits showing right now.
+///
+/// `PeerRegistry` already stops *adding* new unpaired devices while the
+/// switch is off (see `mark_discovered_at`'s `discover_new_devices` flag),
+/// but it keeps refreshing `last_seen`/endpoints for anything it still
+/// receives packets from — including devices discovered before the switch
+/// was flipped off — so a stale entry never ages out via `prune_expired`
+/// as long as the sender keeps broadcasting. Gating the read side too
+/// means flipping the switch off hides the list immediately, instead of
+/// leaving old entries visible indefinitely.
+fn visible_discovered_devices(
+    search_enabled: bool,
+    discovered: Vec<crate::domain::DeviceInfo>,
+) -> Vec<crate::domain::DeviceInfo> {
+    if search_enabled {
+        discovered
+    } else {
+        Vec::new()
+    }
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -689,5 +710,23 @@ mod tests {
             unavailable_json["issue_code"],
             "network_services_unavailable"
         );
+    }
+
+    #[test]
+    fn visible_discovered_devices_passes_through_when_search_enabled() {
+        let device = DeviceInfo::new_local("MacBook", 45731);
+
+        let visible = visible_discovered_devices(true, vec![device.clone()]);
+
+        assert_eq!(visible, vec![device]);
+    }
+
+    #[test]
+    fn visible_discovered_devices_hides_everything_when_search_disabled() {
+        let device = DeviceInfo::new_local("MacBook", 45731);
+
+        let visible = visible_discovered_devices(false, vec![device]);
+
+        assert!(visible.is_empty());
     }
 }

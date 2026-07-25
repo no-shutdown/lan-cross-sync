@@ -1125,13 +1125,6 @@ function TransferPanel({
             setIncomingOffers((prev) => prev.some((offer) => offer.transfer_id === payload.transfer_id)
               ? prev
               : [...prev, payload])
-            // Clicking a system notification doesn't reliably reach the app
-            // (upstream plugin-notification has no working click handler on
-            // Windows), so surface the window ourselves instead of relying
-            // on that round trip.
-            const appWindow = getCurrentWebviewWindow()
-            void appWindow.show().catch(() => {})
-            void appWindow.setFocus().catch(() => {})
           }
           // The sender cancelling, or the peer dropping off, removes a
           // still-queued offer too — not just the one currently on screen.

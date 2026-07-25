@@ -1471,6 +1471,24 @@ export default function App() {
             </span>
           </div>
           <p>{networkStatusText(locale, dashboard.network_status.issue_code)}</p>
+          <label className="switch-row">
+            <span className="switch">
+              <input
+                type="checkbox"
+                checked={dashboard.settings.search_enabled}
+                onChange={() => void toggleSearchEnabled()}
+              />
+              <span className="switch-track" />
+            </span>
+            <span className="switch-label">
+              <span>{t(locale, 'searchDevices')}</span>
+              <span className="switch-live-state">
+                {dashboard.network_status.broadcasting
+                  ? t(locale, 'broadcastingNow')
+                  : t(locale, 'notBroadcastingNow')}
+              </span>
+            </span>
+          </label>
         </div>
         <div className="network-endpoints">
           <span>
@@ -1558,15 +1576,6 @@ export default function App() {
           />
           {t(locale, 'autostart')}
         </label>
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={dashboard.settings.search_enabled}
-            onChange={() => void toggleSearchEnabled()}
-          />
-          {t(locale, 'searchDevices')}
-        </label>
-        <p className="hint">{t(locale, 'searchDevicesHint')}</p>
       </section>
     </main>
   )

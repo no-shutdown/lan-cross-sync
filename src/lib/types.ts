@@ -35,6 +35,7 @@ export interface NetworkStatus {
   transport_ready: boolean
   advertising: boolean
   issue_code: string | null
+  broadcasting: boolean
 }
 
 export interface DashboardState {

@@ -1,4 +1,5 @@
 use crate::{
+    commands::NetworkStatus,
     domain::{DeviceId, DeviceInfo, LocalSettings, PairedPeer, PeerConnectionState},
     pairing::{PairingRuntime, PairingSession},
     protocol::{
@@ -133,6 +134,7 @@ pub async fn announce_loop(
     settings: Arc<Mutex<LocalSettings>>,
     registry: Arc<Mutex<PeerRegistry>>,
     active_pairing: Arc<Mutex<Option<PairingSession>>>,
+    network_status: Arc<Mutex<NetworkStatus>>,
     port: u16,
 ) -> Result<()> {
     let socket = UdpSocket::bind(("0.0.0.0", 0))
@@ -171,7 +173,10 @@ pub async fn announce_loop(
             (registry.paired(), connected_peer_endpoints(&registry))
         };
 
-        if should_broadcast(search_enabled, pairing_active, &paired_peers) {
+        let is_broadcasting = should_broadcast(search_enabled, pairing_active, &paired_peers);
+        network_status.lock().unwrap().broadcasting = is_broadcasting;
+
+        if is_broadcasting {
             for target in &targets {
                 socket
                     .send_to(&payload, target)

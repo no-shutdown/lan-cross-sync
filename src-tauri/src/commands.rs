@@ -37,6 +37,13 @@ pub struct NetworkStatus {
     pub transport_ready: bool,
     pub advertising: bool,
     pub issue_code: Option<String>,
+    /// Whether `announce_loop` actually sent a subnet broadcast packet on
+    /// its most recent tick (as opposed to only sending unicast heartbeats
+    /// to already-connected peers). Updated live by `announce_loop` via the
+    /// shared `network_status` handle — distinct from `advertising`, which
+    /// only reflects whether the UDP/TCP sockets bound successfully at
+    /// startup and never changes afterward.
+    pub broadcasting: bool,
 }
 
 impl NetworkStatus {
@@ -66,6 +73,7 @@ impl NetworkStatus {
             transport_ready,
             advertising,
             issue_code,
+            broadcasting: false,
         }
     }
 }
@@ -653,6 +661,7 @@ mod tests {
         assert_eq!(json["transport_ready"], true);
         assert_eq!(json["advertising"], true);
         assert_eq!(json["issue_code"], "transport_port_fallback");
+        assert_eq!(json["broadcasting"], false);
 
         let unavailable = NetworkStatus::from_bindings(false, None, false);
         let unavailable_json = serde_json::to_value(unavailable).unwrap();

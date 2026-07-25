@@ -147,11 +147,13 @@ pub fn run() {
                 let announce_settings = settings.clone();
                 let announce_registry = registry.clone();
                 let announce_active_pairing = active_pairing.clone();
+                let announce_network_status = network_status.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(err) = discovery::announce_loop(
                         announce_settings,
                         announce_registry,
                         announce_active_pairing,
+                        announce_network_status,
                         DEFAULT_DISCOVERY_PORT,
                     )
                     .await

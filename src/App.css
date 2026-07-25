@@ -314,7 +314,7 @@ button:focus-visible {
 }
 
 .network-status {
-  align-items: center;
+  align-items: flex-start;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 10px;
@@ -375,11 +375,19 @@ button:focus-visible {
   color: var(--color-text);
 }
 
+.switch-group {
+  border-top: 1px solid var(--color-border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
 .switch-row {
   align-items: center;
   display: flex;
   gap: 10px;
-  margin-top: 10px;
 }
 
 .switch {

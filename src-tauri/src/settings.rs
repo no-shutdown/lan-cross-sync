@@ -1,6 +1,6 @@
 #[cfg(test)]
 use crate::domain::PairedPeer;
-use crate::domain::{default_ui_locale, DeviceInfo, LocalSettings};
+use crate::domain::{default_search_enabled, default_ui_locale, DeviceInfo, LocalSettings};
 use anyhow::{Context, Result};
 #[cfg(test)]
 use std::path::Path;
@@ -37,6 +37,7 @@ impl SettingsStore {
             local_device: DeviceInfo::new_local(device_name, DEFAULT_TRANSPORT_PORT),
             paired_peers: Vec::new(),
             ui_locale: default_ui_locale(),
+            search_enabled: default_search_enabled(),
         };
         self.save(&settings)?;
         Ok(settings)

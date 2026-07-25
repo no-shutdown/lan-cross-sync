@@ -374,6 +374,7 @@ mod tests {
             local_device: local_device.clone(),
             paired_peers: Vec::new(),
             ui_locale: "zh-CN".to_string(),
+            search_enabled: true,
         };
         PairingRuntime::new(
             local_device,

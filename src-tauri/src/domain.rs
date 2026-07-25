@@ -55,10 +55,16 @@ pub struct LocalSettings {
     pub paired_peers: Vec<PairedPeer>,
     #[serde(default = "default_ui_locale")]
     pub ui_locale: String,
+    #[serde(default = "default_search_enabled")]
+    pub search_enabled: bool,
 }
 
 pub fn default_ui_locale() -> String {
     "zh-CN".to_string()
+}
+
+pub fn default_search_enabled() -> bool {
+    true
 }
 
 /// Generates a per-install default device name that distinguishes this
@@ -176,5 +182,39 @@ mod tests {
         let settings: LocalSettings = serde_json::from_str(raw).unwrap();
 
         assert_eq!(settings.ui_locale, "zh-CN");
+    }
+
+    #[test]
+    fn old_settings_get_default_search_enabled_when_decoded() {
+        let raw = r#"{
+            "local_device": {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "name": "Windows Desk",
+                "app_version": "0.1.0",
+                "protocol_version": 1,
+                "port": 45731,
+                "capabilities": ["discovery"]
+            },
+            "paired_peers": []
+        }"#;
+
+        let settings: LocalSettings = serde_json::from_str(raw).unwrap();
+
+        assert!(settings.search_enabled);
+    }
+
+    #[test]
+    fn search_enabled_round_trips_through_serialization() {
+        let settings = LocalSettings {
+            local_device: DeviceInfo::new_local("Windows Desk", 45731),
+            paired_peers: Vec::new(),
+            ui_locale: default_ui_locale(),
+            search_enabled: false,
+        };
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let decoded: LocalSettings = serde_json::from_str(&json).unwrap();
+
+        assert!(!decoded.search_enabled);
     }
 }

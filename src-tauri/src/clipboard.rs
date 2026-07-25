@@ -433,6 +433,7 @@ mod tests {
                 state: PeerConnectionState::Offline,
             }],
             ui_locale: "zh-CN".to_string(),
+            search_enabled: true,
         }
     }
 
@@ -442,6 +443,7 @@ mod tests {
             local_device: DeviceInfo::new_local("Windows Desk", 45731),
             paired_peers: Vec::new(),
             ui_locale: "zh-CN".to_string(),
+            search_enabled: true,
         };
 
         assert!(!has_active_clipboard_target(&settings, |_| true));

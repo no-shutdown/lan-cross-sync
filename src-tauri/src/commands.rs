@@ -450,6 +450,7 @@ mod tests {
             local_device: DeviceInfo::new_local("Windows Desk", 45731),
             paired_peers: vec![peer.clone()],
             ui_locale: "zh-CN".to_string(),
+            search_enabled: true,
         }));
         store.save(&settings.lock().unwrap()).unwrap();
         let registry = Arc::new(Mutex::new(PeerRegistry::from_paired(vec![peer])));
@@ -487,6 +488,7 @@ mod tests {
             local_device: DeviceInfo::new_local("Windows Desk", 45731),
             paired_peers: peers,
             ui_locale: "zh-CN".to_string(),
+            search_enabled: true,
         }
     }
 

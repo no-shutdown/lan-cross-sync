@@ -23,6 +23,7 @@ export interface LocalSettings {
   local_device: DeviceInfo
   paired_peers: PairedPeer[]
   ui_locale: Locale
+  search_enabled: boolean
 }
 
 export type Locale = 'zh-CN' | 'en-US'

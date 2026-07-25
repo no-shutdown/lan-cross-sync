@@ -29,6 +29,10 @@ export function setUiLocale(locale: Locale): Promise<LocalSettings> {
   return invoke('set_ui_locale', { locale })
 }
 
+export function setSearchEnabled(enabled: boolean): Promise<LocalSettings> {
+  return invoke('set_search_enabled', { enabled })
+}
+
 export function setDeviceName(name: string): Promise<LocalSettings> {
   return invoke('set_device_name', { name })
 }

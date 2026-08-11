@@ -1395,12 +1395,45 @@ fn finalize_staging_destination(
         if entry.kind != ManifestEntryKind::File {
             continue;
         }
-        let staged_path = safe_destination_path(staging_dir, &entry.relative_path)?;
         let destination_path = safe_destination_path(destination, &entry.relative_path)?;
         if let Some(parent) = destination_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::rename(staged_path, destination_path)?;
+    }
+    move_staged_files_with(destination, staging_dir, manifest, |source, target| {
+        fs::rename(source, target)
+    })
+}
+
+fn move_staged_files_with<F>(
+    destination: &Path,
+    staging_dir: &Path,
+    manifest: &TransferManifest,
+    mut move_file: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(&Path, &Path) -> io::Result<()>,
+{
+    let mut moved_files: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for entry in &manifest.entries {
+        if entry.kind != ManifestEntryKind::File {
+            continue;
+        }
+        let staged_path = safe_destination_path(staging_dir, &entry.relative_path)?;
+        let destination_path = safe_destination_path(destination, &entry.relative_path)?;
+        if let Err(err) = move_file(&staged_path, &destination_path) {
+            for (staged_path, destination_path) in moved_files.iter().rev() {
+                if let Err(rollback_error) = move_file(destination_path, staged_path) {
+                    tracing::warn!(
+                        ?rollback_error,
+                        path = %destination_path.display(),
+                        "failed to roll back staged file move"
+                    );
+                }
+            }
+            return Err(err.into());
+        }
+        moved_files.push((staged_path, destination_path));
     }
     Ok(())
 }
@@ -1788,6 +1821,58 @@ mod tests {
         );
         cleanup_staging_directory(&staging).unwrap();
         assert!(!staging.exists());
+    }
+
+    #[test]
+    fn staged_file_moves_roll_back_when_a_later_move_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("destination");
+        let staging = destination.join(STAGING_DIRECTORY_NAME).join("transfer-1");
+        let manifest = TransferManifest {
+            root_name: "Root".to_string(),
+            total_bytes: 11,
+            entries: vec![
+                ManifestEntry {
+                    relative_path: "Root".to_string(),
+                    kind: ManifestEntryKind::Directory,
+                    size: 0,
+                },
+                ManifestEntry {
+                    relative_path: "Root/first.txt".to_string(),
+                    kind: ManifestEntryKind::File,
+                    size: 5,
+                },
+                ManifestEntry {
+                    relative_path: "Root/second.txt".to_string(),
+                    kind: ManifestEntryKind::File,
+                    size: 6,
+                },
+            ],
+        };
+
+        fs::create_dir_all(destination.join("Root")).unwrap();
+        fs::create_dir_all(staging.join("Root")).unwrap();
+        fs::write(staging.join("Root/first.txt"), b"first").unwrap();
+        fs::write(staging.join("Root/second.txt"), b"second").unwrap();
+
+        let mut move_count = 0;
+        let result = move_staged_files_with(&destination, &staging, &manifest, |source, target| {
+            move_count += 1;
+            if move_count == 2 {
+                Err(io::Error::other("injected rename failure"))
+            } else {
+                fs::rename(source, target)
+            }
+        });
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(staging.join("Root/first.txt")).unwrap(), b"first");
+        assert_eq!(
+            fs::read(staging.join("Root/second.txt")).unwrap(),
+            b"second"
+        );
+        assert!(!destination.join("Root/first.txt").exists());
+        assert!(!destination.join("Root/second.txt").exists());
     }
 
     #[test]

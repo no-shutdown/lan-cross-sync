@@ -339,6 +339,10 @@ struct ConnectionEntry {
     sender: mpsc::Sender<TransportMessage>,
 }
 
+fn connection_token_matches(current_token: Option<&str>, ending_token: &str) -> bool {
+    current_token.is_some_and(|current_token| current_token == ending_token)
+}
+
 #[derive(Clone)]
 pub struct TransportRuntime {
     pub local_device: DeviceInfo,
@@ -597,14 +601,20 @@ impl TransportRuntime {
             }
         };
 
-        let mut connections = self.connections.lock().unwrap();
-        if connections
-            .get(&peer.id)
-            .is_some_and(|entry| entry.token == token)
-        {
-            connections.remove(&peer.id);
+        let is_current_connection = {
+            let mut connections = self.connections.lock().unwrap();
+            let is_current = connection_token_matches(
+                connections.get(&peer.id).map(|entry| entry.token.as_str()),
+                &token,
+            );
+            if is_current {
+                connections.remove(&peer.id);
+            }
+            is_current
+        };
+        if !is_current_connection {
+            return result.map_err(Into::into);
         }
-        drop(connections);
         self.registry
             .lock()
             .unwrap()
@@ -644,6 +654,14 @@ mod tests {
             encode_frame(&payload),
             Err(TransportError::FrameTooLarge(size)) if size == payload.len()
         ));
+    }
+
+    #[test]
+    fn connection_token_matches_only_the_current_generation() {
+        assert!(!connection_token_matches(None, "ending"));
+        assert!(connection_token_matches(Some("current"), "current"));
+        assert!(!connection_token_matches(Some("old"), "ending"));
+        assert!(connection_token_matches(Some("new"), "new"));
     }
 
     #[tokio::test]

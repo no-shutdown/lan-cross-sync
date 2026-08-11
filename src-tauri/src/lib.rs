@@ -211,6 +211,7 @@ pub fn run() {
                             tracing::debug!(device_id = ?peer.id, "peer transport connected");
                         }
                         TransportEvent::PeerDisconnected { peer, reason_code } => {
+                            clipboard_events.handle_peer_disconnected(&peer.id);
                             file_events.handle_peer_disconnected(&peer.id);
                             tracing::debug!(device_id = ?peer.id, %reason_code, "peer transport disconnected");
                         }
@@ -220,6 +221,24 @@ pub fn run() {
                                     clipboard_events.handle_remote(&peer.id, clipboard_event)
                                 {
                                     tracing::debug!(?err, device_id = ?peer.id, "clipboard event was rejected");
+                                }
+                            }
+                            TransportMessage::ClipboardImageStart(start) => {
+                                if let Err(err) = clipboard_events.handle_image_start(&peer.id, start)
+                                {
+                                    tracing::debug!(?err, device_id = ?peer.id, "clipboard image start was rejected");
+                                }
+                            }
+                            TransportMessage::ClipboardImageChunk(chunk) => {
+                                if let Err(err) = clipboard_events.handle_image_chunk(&peer.id, chunk)
+                                {
+                                    tracing::debug!(?err, device_id = ?peer.id, "clipboard image chunk was rejected");
+                                }
+                            }
+                            TransportMessage::ClipboardImageComplete(complete) => {
+                                if let Err(err) = clipboard_events.handle_image_complete(&peer.id, complete)
+                                {
+                                    tracing::debug!(?err, device_id = ?peer.id, "clipboard image completion was rejected");
                                 }
                             }
                             message @ (TransportMessage::FileOffer(_)

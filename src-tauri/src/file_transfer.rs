@@ -365,6 +365,15 @@ pub fn part_destination_path(destination: &Path) -> PathBuf {
     destination.with_file_name(format!("{name}.part"))
 }
 
+fn open_partial_file(path: &Path) -> io::Result<std::fs::File> {
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .read(true)
+        .open(path)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransferState {
     Preparing,
@@ -701,14 +710,31 @@ impl FileTransferService {
         peer: &DeviceInfo,
         message: TransportMessage,
     ) -> anyhow::Result<()> {
-        match message {
+        let chunk_transfer_id = match &message {
+            TransportMessage::FileChunk(chunk) => Some(chunk.transfer_id.clone()),
+            _ => None,
+        };
+        let result = match message {
             TransportMessage::FileOffer(offer) => self.handle_offer(peer, offer),
             TransportMessage::FileAccept(accept) => self.handle_accept(peer, accept).await,
             TransportMessage::FileChunk(chunk) => self.handle_chunk(peer, chunk),
             TransportMessage::FileComplete(complete) => self.handle_complete(peer, complete),
             TransportMessage::FileCancel(cancel) => self.handle_cancel(peer, cancel),
             _ => Ok(()),
+        };
+        if let (Some(transfer_id), Err(error)) = (chunk_transfer_id, &result) {
+            if let Err(abort_error) = self
+                .abort_incoming_transfer(peer, &transfer_id, format_error_code(error))
+                .await
+            {
+                tracing::debug!(
+                    ?abort_error,
+                    %transfer_id,
+                    "failed to abort incoming file transfer"
+                );
+            }
         }
+        result
     }
 
     fn handle_offer(&self, peer: &DeviceInfo, offer: FileOffer) -> anyhow::Result<()> {
@@ -765,30 +791,60 @@ impl FileTransferService {
         };
 
         let transfer_id = accept.transfer_id;
-        let result = self.stream_outgoing(&peer.id, &transfer_id, &plan).await;
-        let success = result.is_ok();
-        let reason_code = result.as_ref().err().map(|err| {
-            if self.is_cancelled(&transfer_id) {
-                "cancelled_by_user".to_string()
-            } else {
-                format_error_code(err)
+        let peer_id = peer.id.clone();
+        let service = self.clone();
+        tokio::spawn(async move {
+            if let Err(err) = service
+                .finish_outgoing_transfer(peer_id, transfer_id, plan)
+                .await
+            {
+                tracing::debug!(?err, "outgoing file transfer task failed");
             }
         });
+        Ok(())
+    }
+
+    async fn finish_outgoing_transfer(
+        &self,
+        peer_id: DeviceId,
+        transfer_id: String,
+        plan: TransferPlan,
+    ) -> anyhow::Result<()> {
+        let result = self.stream_outgoing(&peer_id, &transfer_id, &plan).await;
         let cancelled = self.is_cancelled(&transfer_id);
-        let _ = self
+        let success = result.is_ok() && !cancelled;
+        let reason_code = if success {
+            None
+        } else if cancelled {
+            Some("cancelled_by_user".to_string())
+        } else {
+            Some(
+                result
+                    .as_ref()
+                    .err()
+                    .map(format_error_code)
+                    .unwrap_or_else(|| "transfer_failed".to_string()),
+            )
+        };
+        if let Err(err) = self
             .transport
             .send_message(
-                &peer.id,
+                &peer_id,
                 TransportMessage::FileComplete(FileComplete {
                     transfer_id: transfer_id.clone(),
                     success,
                     reason_code: reason_code.clone(),
                 }),
             )
-            .await;
+            .await
+        {
+            tracing::debug!(?err, %transfer_id, "failed to send file transfer completion");
+        }
         if let Some(mut transfer) = self.outgoing.lock().unwrap().remove(&transfer_id) {
             if success {
-                transfer.state.complete()?;
+                if let Err(err) = transfer.state.complete() {
+                    tracing::debug!(?err, %transfer_id, "failed to complete outgoing transfer state");
+                }
             } else if cancelled {
                 let _ = transfer.state.cancel();
             } else {
@@ -799,19 +855,19 @@ impl FileTransferService {
         if success {
             self.emit(TransferEvent::Completed {
                 transfer_id,
-                peer_id: peer.id.clone(),
+                peer_id,
                 direction: TransferDirection::Sending,
             });
         } else if reason_code.as_deref() == Some("cancelled_by_user") {
             self.emit(TransferEvent::Cancelled {
                 transfer_id,
-                peer_id: peer.id.clone(),
+                peer_id,
                 direction: TransferDirection::Sending,
             });
         } else {
             self.emit(TransferEvent::Failed {
                 transfer_id,
-                peer_id: peer.id.clone(),
+                peer_id,
                 direction: TransferDirection::Sending,
                 reason_code: reason_code.unwrap_or_else(|| "transfer_failed".to_string()),
             });
@@ -912,11 +968,7 @@ impl FileTransferService {
         if let Some(parent) = part_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .read(true)
-            .open(&part_path)?;
+        let mut file = open_partial_file(&part_path)?;
         file.seek(SeekFrom::Start(chunk.offset))?;
         file.write_all(&chunk.data)?;
         file.flush()?;
@@ -945,6 +997,53 @@ impl FileTransferService {
             transferred_bytes: progress,
             total_bytes: manifest.total_bytes,
         });
+        Ok(())
+    }
+
+    async fn abort_incoming_transfer(
+        &self,
+        peer: &DeviceInfo,
+        transfer_id: &str,
+        reason_code: String,
+    ) -> anyhow::Result<()> {
+        let Some(mut transfer) = ({
+            let mut incoming = self.incoming.lock().unwrap();
+            match incoming.get(transfer_id) {
+                Some(transfer) if transfer.peer_id != peer.id => None,
+                Some(_) => incoming.remove(transfer_id),
+                None => None,
+            }
+        }) else {
+            return Ok(());
+        };
+
+        transfer.state.fail();
+        if let Err(err) = self.cleanup_incoming(&transfer) {
+            tracing::debug!(
+                ?err,
+                %transfer_id,
+                "failed to clean aborted incoming file transfer"
+            );
+        }
+        self.emit(TransferEvent::Failed {
+            transfer_id: transfer_id.to_string(),
+            peer_id: peer.id.clone(),
+            direction: TransferDirection::Receiving,
+            reason_code: reason_code.clone(),
+        });
+        if let Err(err) = self
+            .transport
+            .send_message(
+                &peer.id,
+                TransportMessage::FileCancel(FileCancel {
+                    transfer_id: transfer_id.to_string(),
+                    reason_code: Some(reason_code),
+                }),
+            )
+            .await
+        {
+            tracing::debug!(?err, %transfer_id, "failed to notify sender about aborted transfer");
+        }
         Ok(())
     }
 
@@ -1402,7 +1501,165 @@ mod base64_bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        domain::{PairedPeer, PeerConnectionState},
+        registry::PeerRegistry,
+    };
     use std::fs;
+    use tokio::time::{timeout, Duration};
+
+    struct TransferFixture {
+        _root: tempfile::TempDir,
+        service: FileTransferService,
+        events: mpsc::UnboundedReceiver<TransferEvent>,
+        peer: DeviceInfo,
+        transfer_id: String,
+        staging_dir: PathBuf,
+        outbound: mpsc::Receiver<TransportMessage>,
+    }
+
+    impl TransferFixture {
+        fn new() -> Self {
+            let root = tempfile::tempdir().unwrap();
+            let destination = root.path().join("Root");
+            fs::create_dir_all(&destination).unwrap();
+            let local = DeviceInfo::new_local("Local", 45731);
+            let peer = DeviceInfo::new_local("Peer", 45732);
+            let registry = Arc::new(Mutex::new(PeerRegistry::from_paired(vec![PairedPeer {
+                device: peer.clone(),
+                receive_clipboard: true,
+                send_clipboard: true,
+                is_default_file_target: false,
+                state: PeerConnectionState::Connected,
+            }])));
+            let (transport, _) = TransportRuntime::new(local, registry);
+            let transport = Arc::new(transport);
+            let index = root.path().join("cache").join("active-transfers.json");
+            let (service, events) = FileTransferService::new(transport.clone(), index).unwrap();
+            let transfer_id = "transfer-invalid-chunk".to_string();
+            let staging_dir = destination.join(STAGING_DIRECTORY_NAME).join(&transfer_id);
+            let manifest = TransferManifest {
+                root_name: "Root".to_string(),
+                total_bytes: 4,
+                entries: vec![ManifestEntry {
+                    relative_path: "file.bin".to_string(),
+                    kind: ManifestEntryKind::File,
+                    size: 4,
+                }],
+            };
+            service
+                .register_staging(&transfer_id, staging_dir.clone())
+                .unwrap();
+            prepare_staging_destination(&destination, &staging_dir, &manifest).unwrap();
+            let mut state = TransferStateMachine::new();
+            state.offer().unwrap();
+            state.start().unwrap();
+            service.incoming.lock().unwrap().insert(
+                transfer_id.clone(),
+                IncomingTransfer {
+                    transfer_id: transfer_id.clone(),
+                    peer_id: peer.id.clone(),
+                    manifest,
+                    destination: Some(destination),
+                    staging_dir: Some(staging_dir.clone()),
+                    received_files: HashMap::new(),
+                    received_bytes: 0,
+                    state,
+                },
+            );
+            let part_path = part_destination_path(&staging_dir.join("file.bin"));
+            fs::write(part_path, b"part").unwrap();
+            let outbound = transport.add_test_connection(peer.id.clone());
+
+            Self {
+                _root: root,
+                service,
+                events,
+                peer,
+                transfer_id,
+                staging_dir,
+                outbound,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_file_chunk_aborts_transfer_cleans_staging_and_notifies_sender() {
+        let mut fixture = TransferFixture::new();
+
+        let result = fixture
+            .service
+            .handle_message(
+                &fixture.peer,
+                TransportMessage::FileChunk(FileChunk {
+                    transfer_id: fixture.transfer_id.clone(),
+                    relative_path: "file.bin".to_string(),
+                    offset: 1,
+                    data: vec![b'x'],
+                }),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(!fixture
+            .service
+            .incoming
+            .lock()
+            .unwrap()
+            .contains_key(&fixture.transfer_id));
+        assert!(!fixture.staging_dir.exists());
+        let event = timeout(Duration::from_secs(1), fixture.events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event,
+            TransferEvent::Failed { transfer_id, .. } if transfer_id == fixture.transfer_id
+        ));
+        let cancel = timeout(Duration::from_secs(1), fixture.outbound.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            cancel,
+            TransportMessage::FileCancel(FileCancel { transfer_id, .. })
+                if transfer_id == fixture.transfer_id
+        ));
+    }
+
+    #[tokio::test]
+    async fn mismatched_peer_cannot_abort_another_peers_transfer() {
+        let fixture = TransferFixture::new();
+        let other_peer = DeviceInfo::new_local("Other", 45733);
+        let mut outbound = fixture
+            .service
+            .transport
+            .add_test_connection(other_peer.id.clone());
+
+        let result = fixture
+            .service
+            .handle_message(
+                &other_peer,
+                TransportMessage::FileChunk(FileChunk {
+                    transfer_id: fixture.transfer_id.clone(),
+                    relative_path: "file.bin".to_string(),
+                    offset: 1,
+                    data: vec![b'x'],
+                }),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(fixture
+            .service
+            .incoming
+            .lock()
+            .unwrap()
+            .contains_key(&fixture.transfer_id));
+        assert!(timeout(Duration::from_millis(50), outbound.recv())
+            .await
+            .is_err());
+    }
 
     #[test]
     fn transfer_plan_preserves_nested_folder_structure() {
@@ -1453,6 +1710,21 @@ mod tests {
 
         assert_eq!(part.file_name().unwrap(), "cover.txt.part");
         assert_ne!(destination, part);
+    }
+
+    #[test]
+    fn opening_a_partial_file_does_not_truncate_existing_data() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.part");
+        fs::write(&path, b"prefix").unwrap();
+
+        let mut file = open_partial_file(&path).unwrap();
+        file.seek(SeekFrom::End(0)).unwrap();
+        file.write_all(b"!").unwrap();
+        file.flush().unwrap();
+        drop(file);
+
+        assert_eq!(fs::read(&path).unwrap(), b"prefix!");
     }
 
     #[test]

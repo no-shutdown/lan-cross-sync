@@ -461,6 +461,22 @@ impl TransportRuntime {
             .map_err(|_| TransportError::ConnectionClosed)
     }
 
+    #[cfg(test)]
+    pub(crate) fn add_test_connection(
+        &self,
+        peer_id: DeviceId,
+    ) -> mpsc::Receiver<TransportMessage> {
+        let (sender, receiver) = mpsc::channel(16);
+        self.connections.lock().unwrap().insert(
+            peer_id,
+            ConnectionEntry {
+                token: "test-connection".to_string(),
+                sender,
+            },
+        );
+        receiver
+    }
+
     pub fn is_connected(&self, peer_id: &DeviceId) -> bool {
         self.connections.lock().unwrap().contains_key(peer_id)
     }

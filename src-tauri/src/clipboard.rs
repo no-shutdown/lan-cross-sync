@@ -5,8 +5,6 @@ use crate::{
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
-#[cfg(not(target_os = "windows"))]
-use std::time::Duration;
 use std::{
     borrow::Cow,
     collections::HashSet,
@@ -15,7 +13,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 #[cfg(target_os = "windows")]
@@ -177,7 +175,7 @@ impl ClipboardService {
     pub async fn run(self) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
-            return self.run_windows().await;
+            self.run_windows().await
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -210,10 +208,10 @@ impl ClipboardService {
     }
 
     async fn process_local_change(&self) -> anyhow::Result<()> {
-        let payload = tokio::task::spawn_blocking(read_system_clipboard)
+        let payload = tokio::task::spawn_blocking(read_system_clipboard_with_retry)
             .await
-            .map_err(|err| anyhow::anyhow!("clipboard worker stopped: {err}"))?;
-        let Ok(Some(payload)) = payload else {
+            .map_err(|err| anyhow::anyhow!("clipboard worker stopped: {err}"))??;
+        let Some(payload) = payload else {
             return Ok(());
         };
 
@@ -379,6 +377,22 @@ fn timestamp_ms() -> u64 {
         .as_millis() as u64
 }
 
+fn retry_clipboard_read<T, E, F, W>(mut read: F, mut wait: W) -> Result<Option<T>, E>
+where
+    F: FnMut() -> Result<Option<T>, E>,
+    W: FnMut(Duration),
+{
+    let mut result = read();
+    for _ in 1..5 {
+        if matches!(&result, Ok(Some(_))) {
+            return result;
+        }
+        wait(Duration::from_millis(20));
+        result = read();
+    }
+    result
+}
+
 fn read_system_clipboard() -> Result<Option<ClipboardPayload>, ClipboardError> {
     let mut clipboard = Clipboard::new().map_err(|err| ClipboardError::System(err.to_string()))?;
     if let Ok(text) = clipboard.get_text() {
@@ -395,6 +409,10 @@ fn read_system_clipboard() -> Result<Option<ClipboardPayload>, ClipboardError> {
         }));
     }
     Ok(None)
+}
+
+fn read_system_clipboard_with_retry() -> Result<Option<ClipboardPayload>, ClipboardError> {
+    retry_clipboard_read(read_system_clipboard, std::thread::sleep)
 }
 
 fn write_system_clipboard(payload: &ClipboardPayload) -> Result<(), ClipboardError> {
@@ -534,5 +552,97 @@ mod tests {
 
         assert!(tracker.accept_remote(&first));
         assert!(tracker.accept_remote(&second));
+    }
+
+    #[test]
+    fn clipboard_read_retries_error_until_payload_is_available() {
+        let mut outcomes = vec![
+            Err(ClipboardError::System("busy".to_string())),
+            Ok(Some(ClipboardPayload::Text {
+                text: "ready".to_string(),
+            })),
+        ]
+        .into_iter();
+        let mut attempts = 0;
+        let mut waits = Vec::new();
+
+        let result = retry_clipboard_read(
+            || {
+                attempts += 1;
+                outcomes.next().expect("test outcome missing")
+            },
+            |delay| waits.push(delay),
+        );
+
+        assert!(matches!(
+            result,
+            Ok(Some(ClipboardPayload::Text { ref text })) if text == "ready"
+        ));
+        assert_eq!(attempts, 2);
+        assert_eq!(waits, vec![std::time::Duration::from_millis(20)]);
+    }
+
+    #[test]
+    fn clipboard_read_retries_empty_results_five_times() {
+        let mut attempts = 0;
+        let mut waits = Vec::new();
+
+        let result = retry_clipboard_read(
+            || {
+                attempts += 1;
+                Ok::<Option<ClipboardPayload>, ClipboardError>(None)
+            },
+            |delay| waits.push(delay),
+        );
+
+        assert!(matches!(result, Ok(None)));
+        assert_eq!(attempts, 5);
+        assert_eq!(waits, vec![std::time::Duration::from_millis(20); 4]);
+    }
+
+    #[test]
+    fn clipboard_read_returns_the_last_error_after_five_attempts() {
+        let mut attempts = 0;
+        let mut waits = Vec::new();
+
+        let result = retry_clipboard_read(
+            || {
+                attempts += 1;
+                Err::<Option<ClipboardPayload>, ClipboardError>(ClipboardError::System(format!(
+                    "attempt {attempts}"
+                )))
+            },
+            |delay| waits.push(delay),
+        );
+
+        assert!(matches!(
+            result,
+            Err(ClipboardError::System(message)) if message == "attempt 5"
+        ));
+        assert_eq!(attempts, 5);
+        assert_eq!(waits, vec![std::time::Duration::from_millis(20); 4]);
+    }
+
+    #[test]
+    fn clipboard_read_returns_first_payload_without_waiting() {
+        let mut attempts = 0;
+        let mut waits = Vec::new();
+
+        let result = retry_clipboard_read(
+            || {
+                attempts += 1;
+                Ok::<Option<ClipboardPayload>, ClipboardError>(Some(ClipboardPayload::Text {
+                    text: "ready".to_string(),
+                }))
+            },
+            |delay| waits.push(delay),
+        );
+
+        assert!(matches!(
+            result,
+            Ok(Some(ClipboardPayload::Text { ref text })) if text == "ready"
+        ));
+        assert_eq!(attempts, 1);
+        assert!(waits.is_empty());
     }
 }

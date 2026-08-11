@@ -43,6 +43,30 @@ pub enum ClipboardPayload {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ClipboardImageStart {
+    pub event_id: String,
+    pub source_device_id: DeviceId,
+    pub timestamp: i64,
+    pub content_hash: String,
+    pub width: u32,
+    pub height: u32,
+    pub total_bytes: u64,
+    pub mime_type: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ClipboardImageChunk {
+    pub event_id: String,
+    pub offset: u64,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ClipboardImageComplete {
+    pub event_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ClipboardEvent {
     pub event_id: String,
     pub source_device_id: DeviceId,

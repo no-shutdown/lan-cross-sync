@@ -31,6 +31,7 @@ anyhow = "1.0.104"
 if-addrs = "0.13"
 arboard = "3.6.1"
 base64 = "0.22.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
 directories = "6.0.0"
 time = { version = "0.3.54", features = ["serde", "formatting"] }
 tracing = "0.1.44"

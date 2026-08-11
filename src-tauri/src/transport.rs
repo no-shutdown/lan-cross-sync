@@ -1,5 +1,5 @@
 use crate::{
-    clipboard::ClipboardEvent,
+    clipboard::{ClipboardEvent, ClipboardImageChunk, ClipboardImageComplete, ClipboardImageStart},
     domain::{DeviceId, DeviceInfo, PeerConnectionState},
     file_transfer::{FileAccept, FileCancel, FileChunk, FileComplete, FileOffer},
     protocol::PROTOCOL_VERSION,
@@ -103,6 +103,9 @@ pub enum TransportMessage {
         nonce: u64,
     },
     Clipboard(ClipboardEvent),
+    ClipboardImageStart(ClipboardImageStart),
+    ClipboardImageChunk(ClipboardImageChunk),
+    ClipboardImageComplete(ClipboardImageComplete),
     FileOffer(FileOffer),
     FileAccept(FileAccept),
     FileChunk(FileChunk),
@@ -701,6 +704,78 @@ mod tests {
 
         write_task.await.unwrap();
         assert_eq!(message, expected);
+    }
+
+    #[test]
+    fn clipboard_image_start_round_trips_with_wire_shape() {
+        let device = DeviceInfo::new_local("MacBook", 45731);
+        let input = serde_json::json!({
+            "type": "clipboard_image_start",
+            "event_id": "event-1",
+            "source_device_id": device.id,
+            "timestamp": 1_700_000_000_i64,
+            "content_hash": "hash-1",
+            "width": 1920,
+            "height": 1080,
+            "total_bytes": 123456,
+            "mime_type": "image/png"
+        });
+
+        let message: TransportMessage = serde_json::from_value(input).unwrap();
+        let encoded = serde_json::to_value(&message).unwrap();
+
+        assert_eq!(encoded["type"], "clipboard_image_start");
+        assert_eq!(encoded["event_id"], "event-1");
+        assert_eq!(encoded["timestamp"], 1_700_000_000_i64);
+        assert_eq!(encoded["content_hash"], "hash-1");
+        assert_eq!(encoded["width"], 1920);
+        assert_eq!(encoded["height"], 1080);
+        assert_eq!(encoded["total_bytes"], 123456);
+        assert_eq!(encoded["mime_type"], "image/png");
+        assert_eq!(
+            serde_json::from_value::<TransportMessage>(encoded).unwrap(),
+            message
+        );
+    }
+
+    #[test]
+    fn clipboard_image_chunk_round_trips_with_wire_shape() {
+        let input = serde_json::json!({
+            "type": "clipboard_image_chunk",
+            "event_id": "event-1",
+            "offset": 4096,
+            "data": [0, 1, 2, 255]
+        });
+
+        let message: TransportMessage = serde_json::from_value(input).unwrap();
+        let encoded = serde_json::to_value(&message).unwrap();
+
+        assert_eq!(encoded["type"], "clipboard_image_chunk");
+        assert_eq!(encoded["event_id"], "event-1");
+        assert_eq!(encoded["offset"], 4096);
+        assert_eq!(encoded["data"], serde_json::json!([0, 1, 2, 255]));
+        assert_eq!(
+            serde_json::from_value::<TransportMessage>(encoded).unwrap(),
+            message
+        );
+    }
+
+    #[test]
+    fn clipboard_image_complete_round_trips_with_wire_shape() {
+        let input = serde_json::json!({
+            "type": "clipboard_image_complete",
+            "event_id": "event-1"
+        });
+
+        let message: TransportMessage = serde_json::from_value(input).unwrap();
+        let encoded = serde_json::to_value(&message).unwrap();
+
+        assert_eq!(encoded["type"], "clipboard_image_complete");
+        assert_eq!(encoded["event_id"], "event-1");
+        assert_eq!(
+            serde_json::from_value::<TransportMessage>(encoded).unwrap(),
+            message
+        );
     }
 
     #[tokio::test]

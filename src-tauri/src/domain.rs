@@ -101,7 +101,7 @@ impl DeviceInfo {
             id: DeviceId::new(),
             name: name.into(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
-            protocol_version: 2,
+            protocol_version: crate::protocol::PROTOCOL_VERSION,
             port,
             capabilities: vec![
                 Capability::Discovery,
@@ -122,7 +122,7 @@ mod tests {
         let device = DeviceInfo::new_local("Windows Desk", 45731);
 
         assert_eq!(device.name, "Windows Desk");
-        assert_eq!(device.protocol_version, 2);
+        assert_eq!(device.protocol_version, crate::protocol::PROTOCOL_VERSION);
         assert_eq!(device.port, 45731);
         assert!(device.capabilities.contains(&Capability::Discovery));
         assert!(device.capabilities.contains(&Capability::Pairing));

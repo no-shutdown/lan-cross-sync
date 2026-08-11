@@ -2008,6 +2008,7 @@ dependencies = [
  "clipboard-win",
  "directories",
  "if-addrs",
+ "image",
  "rand 0.10.2",
  "serde",
  "serde_json",

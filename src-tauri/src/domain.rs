@@ -138,7 +138,9 @@ mod tests {
         assert!(first.starts_with("Device-"));
         let suffix = first.strip_prefix("Device-").unwrap();
         assert_eq!(suffix.len(), 6);
-        assert!(suffix.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_lowercase()));
+        assert!(suffix
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_lowercase()));
         assert_ne!(first, second);
     }
 

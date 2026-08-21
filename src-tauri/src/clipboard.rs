@@ -11,24 +11,34 @@ use image::{
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     hash::{Hash, Hasher},
     io::Cursor,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 #[cfg(target_os = "windows")]
 use tokio::sync::mpsc;
-#[cfg(not(target_os = "windows"))]
 use tokio::time;
 use uuid::Uuid;
 
 #[cfg(not(target_os = "windows"))]
 pub const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(500);
+#[cfg(target_os = "windows")]
+const CLIPBOARD_LISTENER_RESTART_DELAY: Duration = Duration::from_secs(1);
+/// How long a clipboard write made from a remote payload may still come back
+/// through the local watcher. Images do not survive the round trip byte for
+/// byte, so the echo cannot be recognised by content alone.
+const CLIPBOARD_ECHO_WINDOW: Duration = Duration::from_secs(2);
+/// Upper bound for a single clipboard text payload. A text event travels as one
+/// control frame, so this stays far enough below `MAX_CONTROL_FRAME_BYTES` that
+/// JSON escaping cannot push the frame over the limit and tear the connection
+/// down instead of syncing.
+pub const MAX_TEXT_BYTES: usize = 1024 * 1024;
 pub const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_RAW_IMAGE_BYTES: usize = 128 * 1024 * 1024;
 pub const CLIPBOARD_IMAGE_CHUNK_BYTES: usize = 64 * 1024;
@@ -84,6 +94,8 @@ pub struct ClipboardEvent {
 
 #[derive(Debug, Error)]
 pub enum ClipboardError {
+    #[error("text payload is too large: {0} bytes")]
+    TextTooLarge(usize),
     #[error("image payload is too large: {0} bytes")]
     ImageTooLarge(usize),
     #[error("raw image is too large: {0} bytes")]
@@ -260,18 +272,101 @@ impl IncomingImageTransfer {
     }
 }
 
+/// Which of the two clipboard payload shapes a hash belongs to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClipboardKind {
+    Text,
+    Image,
+}
+
+impl ClipboardPayload {
+    pub fn kind(&self) -> ClipboardKind {
+        match self {
+            ClipboardPayload::Text { .. } => ClipboardKind::Text,
+            ClipboardPayload::Image { .. } => ClipboardKind::Image,
+        }
+    }
+}
+
+/// How the system clipboard compares to what this device last put on it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalClipboardChange {
+    /// The clipboard still holds the content this device already knows about.
+    Unchanged,
+    /// The clipboard changed only because a remote payload this device just
+    /// wrote came back through the watcher, re-encoded into different bytes.
+    Echo,
+    /// New content was put on the clipboard and has to reach the peers.
+    Changed,
+}
+
+/// Loop prevention for clipboard sync.
+///
+/// Only the content this device last put on, or last read from, its own
+/// clipboard is remembered. Remembering every hash ever seen would also
+/// suppress content that is copied again later, or that a peer sends back
+/// after the local clipboard moved on, which is indistinguishable from sync
+/// silently dropping items.
+///
+/// A single remembered hash cannot recognise an *image* echo, because writing
+/// an image and reading it back yields freshly encoded PNG bytes. The short
+/// echo window closes that gap: the first image change after writing a remote
+/// image is the echo of that write, not a copy the user made. Text round-trips
+/// byte for byte, so it never needs the window and never gets swallowed by it.
 #[derive(Default)]
 pub struct ClipboardTracker {
-    seen_hashes: HashSet<String>,
+    last_hash: Option<String>,
+    echo_deadline: Option<Instant>,
 }
 
 impl ClipboardTracker {
-    pub fn observe_local(&mut self, event: &ClipboardEvent) -> bool {
-        self.seen_hashes.insert(event.content_hash.clone())
+    pub fn observe_local(
+        &mut self,
+        content_hash: &str,
+        kind: ClipboardKind,
+        now: Instant,
+    ) -> LocalClipboardChange {
+        // Taken unconditionally: whichever way this observation resolves, it
+        // accounts for the pending write, so the window must not stay open for
+        // whatever the user copies next.
+        let echo_pending = self
+            .echo_deadline
+            .take()
+            .is_some_and(|deadline| deadline > now);
+        if self.last_hash.as_deref() == Some(content_hash) {
+            return LocalClipboardChange::Unchanged;
+        }
+        self.last_hash = Some(content_hash.to_string());
+        if echo_pending && kind == ClipboardKind::Image {
+            LocalClipboardChange::Echo
+        } else {
+            LocalClipboardChange::Changed
+        }
     }
 
-    pub fn accept_remote(&mut self, event: &ClipboardEvent) -> bool {
-        self.seen_hashes.insert(event.content_hash.clone())
+    pub fn accept_remote(&mut self, content_hash: &str, kind: ClipboardKind, now: Instant) -> bool {
+        if self.last_hash.as_deref() == Some(content_hash) {
+            return false;
+        }
+        self.last_hash = Some(content_hash.to_string());
+        self.echo_deadline = match kind {
+            ClipboardKind::Image => Some(now + CLIPBOARD_ECHO_WINDOW),
+            ClipboardKind::Text => None,
+        };
+        true
+    }
+
+    pub fn snapshot(&self) -> Option<String> {
+        self.last_hash.clone()
+    }
+
+    /// Undoes an `observe_local` or `accept_remote` that did not stick, unless
+    /// the clipboard already moved past `expected_current` in the meantime.
+    pub fn restore(&mut self, previous: Option<String>, expected_current: &str) {
+        if self.last_hash.as_deref() == Some(expected_current) {
+            self.last_hash = previous;
+            self.echo_deadline = None;
+        }
     }
 }
 
@@ -313,26 +408,51 @@ impl ClipboardService {
 
     #[cfg(target_os = "windows")]
     async fn run_windows(self) -> anyhow::Result<()> {
-        let mut signals = start_windows_listener();
-        while let Some(signal) = signals.recv().await {
-            signal.map_err(|err| anyhow::anyhow!("clipboard listener stopped: {err}"))?;
-            if self.has_active_target() {
-                self.process_local_change().await?;
+        let mut failures = 0_u32;
+        loop {
+            let mut signals = start_windows_listener();
+            while let Some(signal) = signals.recv().await {
+                if let Err(err) = signal {
+                    tracing::warn!(%err, "clipboard listener reported an error");
+                    continue;
+                }
+                if !self.has_active_target() {
+                    continue;
+                }
+                match self.process_local_change().await {
+                    Ok(()) => failures = 0,
+                    Err(err) => {
+                        failures += 1;
+                        log_clipboard_failure(&err, failures);
+                    }
+                }
             }
-        }
 
-        anyhow::bail!("clipboard listener channel closed")
+            // The monitor thread ended. Rebuild it instead of leaving this
+            // device unable to sync anything until the app is restarted.
+            tracing::warn!("clipboard listener stopped; restarting it");
+            time::sleep(CLIPBOARD_LISTENER_RESTART_DELAY).await;
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
     async fn run_polling(self) -> anyhow::Result<()> {
         let mut interval = time::interval(CLIPBOARD_POLL_INTERVAL);
+        let mut failures = 0_u32;
         loop {
             interval.tick().await;
             if !self.has_active_target() {
                 continue;
             }
-            self.process_local_change().await?;
+            // A busy or briefly unavailable clipboard must not end the watcher:
+            // once this loop returns, nothing restarts it.
+            match self.process_local_change().await {
+                Ok(()) => failures = 0,
+                Err(err) => {
+                    failures += 1;
+                    log_clipboard_failure(&err, failures);
+                }
+            }
         }
     }
 
@@ -357,9 +477,18 @@ impl ClipboardService {
                 return Ok(());
             }
         };
-        if !self.tracker.lock().unwrap().observe_local(&event) {
-            return Ok(());
-        }
+        let previous_hash = {
+            let mut tracker = self.tracker.lock().unwrap();
+            let previous_hash = tracker.snapshot();
+            match tracker.observe_local(&event.content_hash, event.payload.kind(), Instant::now()) {
+                LocalClipboardChange::Unchanged => return Ok(()),
+                LocalClipboardChange::Echo => {
+                    tracing::debug!("ignored the local echo of a remote clipboard payload");
+                    return Ok(());
+                }
+                LocalClipboardChange::Changed => previous_hash,
+            }
+        };
 
         let peer_ids = self
             .settings
@@ -370,10 +499,24 @@ impl ClipboardService {
             .filter(|peer| peer.send_clipboard && self.transport.is_connected(&peer.device.id))
             .map(|peer| peer.device.id.clone())
             .collect::<Vec<_>>();
+        let mut delivered = false;
         for peer_id in peer_ids {
-            if let Err(err) = self.send_clipboard_event(&peer_id, &event).await {
-                tracing::debug!(?err, device_id = ?peer_id, "failed to send clipboard event");
+            match self.send_clipboard_event(&peer_id, &event).await {
+                Ok(()) => delivered = true,
+                Err(err) => {
+                    tracing::warn!(?err, device_id = ?peer_id, "failed to send clipboard event");
+                }
             }
+        }
+
+        if !delivered {
+            // Nothing reached a peer, so forget the observation. Otherwise this
+            // content stays permanently marked as handled and copying it again
+            // would never retry.
+            self.tracker
+                .lock()
+                .unwrap()
+                .restore(previous_hash, &event.content_hash);
         }
 
         Ok(())
@@ -456,11 +599,27 @@ impl ClipboardService {
             .iter()
             .find(|peer| peer.device.id == *peer_id)
             .is_some_and(|peer| peer.receive_clipboard);
-        if !receive_enabled || !self.tracker.lock().unwrap().accept_remote(&event) {
+        if !receive_enabled {
             return Ok(false);
         }
+        // Record before writing: the write itself makes the local watcher fire,
+        // and that echo is only suppressed once the hash is already stored.
+        let previous_hash = {
+            let mut tracker = self.tracker.lock().unwrap();
+            let previous_hash = tracker.snapshot();
+            if !tracker.accept_remote(&event.content_hash, event.payload.kind(), Instant::now()) {
+                return Ok(false);
+            }
+            previous_hash
+        };
 
-        write_system_clipboard(&event.payload)?;
+        if let Err(err) = write_system_clipboard(&event.payload) {
+            self.tracker
+                .lock()
+                .unwrap()
+                .restore(previous_hash, &event.content_hash);
+            return Err(err);
+        }
         Ok(true)
     }
 
@@ -559,6 +718,24 @@ fn start_windows_listener() -> mpsc::UnboundedReceiver<Result<(), String>> {
     receiver
 }
 
+fn log_clipboard_failure(err: &anyhow::Error, consecutive_failures: u32) {
+    // A busy clipboard is normally transient, so only the first failure and
+    // every hundredth after it are worth a warning.
+    if consecutive_failures == 1 || consecutive_failures.is_multiple_of(100) {
+        tracing::warn!(
+            ?err,
+            consecutive_failures,
+            "clipboard change could not be processed"
+        );
+    } else {
+        tracing::debug!(
+            ?err,
+            consecutive_failures,
+            "clipboard change could not be processed"
+        );
+    }
+}
+
 fn has_active_clipboard_target<F>(settings: &LocalSettings, is_connected: F) -> bool
 where
     F: Fn(&DeviceId) -> bool,
@@ -576,12 +753,17 @@ fn event_from_payload(
     payload: ClipboardPayload,
 ) -> Result<ClipboardEvent, ClipboardError> {
     match payload {
-        ClipboardPayload::Text { text } => Ok(ClipboardEvent::from_text(
-            source_device_id,
-            sequence,
-            timestamp_ms,
-            text,
-        )),
+        ClipboardPayload::Text { text } => {
+            if text.len() > MAX_TEXT_BYTES {
+                return Err(ClipboardError::TextTooLarge(text.len()));
+            }
+            Ok(ClipboardEvent::from_text(
+                source_device_id,
+                sequence,
+                timestamp_ms,
+                text,
+            ))
+        }
         ClipboardPayload::Image {
             mime_type,
             width,
@@ -1192,25 +1374,203 @@ mod tests {
         );
     }
 
-    #[test]
-    fn remote_event_is_accepted_once_by_content_hash() {
-        let device = DeviceInfo::new_local("MacBook", 45731);
-        let event = ClipboardEvent::from_text(device.id, 1, 10, "hello");
-        let mut tracker = ClipboardTracker::default();
-
-        assert!(tracker.accept_remote(&event));
-        assert!(!tracker.accept_remote(&event));
+    fn hash_of(text: &str) -> String {
+        content_hash(format!("text:{text}").as_bytes())
     }
 
     #[test]
-    fn different_clipboard_contents_are_not_deduplicated() {
-        let device = DeviceInfo::new_local("MacBook", 45731);
-        let first = ClipboardEvent::from_text(device.id.clone(), 1, 10, "first");
-        let second = ClipboardEvent::from_text(device.id, 2, 11, "second");
+    fn recopying_earlier_content_is_synced_again() {
+        let now = Instant::now();
         let mut tracker = ClipboardTracker::default();
 
-        assert!(tracker.accept_remote(&first));
-        assert!(tracker.accept_remote(&second));
+        assert_eq!(
+            tracker.observe_local(&hash_of("first"), ClipboardKind::Text, now),
+            LocalClipboardChange::Changed
+        );
+        assert_eq!(
+            tracker.observe_local(&hash_of("second"), ClipboardKind::Text, now),
+            LocalClipboardChange::Changed
+        );
+        assert_eq!(
+            tracker.observe_local(&hash_of("first"), ClipboardKind::Text, now),
+            LocalClipboardChange::Changed
+        );
+    }
+
+    #[test]
+    fn unchanged_clipboard_content_is_not_resent() {
+        let now = Instant::now();
+        let mut tracker = ClipboardTracker::default();
+
+        assert_eq!(
+            tracker.observe_local(&hash_of("first"), ClipboardKind::Text, now),
+            LocalClipboardChange::Changed
+        );
+        assert_eq!(
+            tracker.observe_local(&hash_of("first"), ClipboardKind::Text, now),
+            LocalClipboardChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn remote_content_is_applied_after_the_local_clipboard_moved_on() {
+        let now = Instant::now();
+        let mut tracker = ClipboardTracker::default();
+
+        assert!(tracker.accept_remote(&hash_of("shared"), ClipboardKind::Text, now));
+        assert_eq!(
+            tracker.observe_local(&hash_of("local only"), ClipboardKind::Text, now),
+            LocalClipboardChange::Changed
+        );
+        assert!(tracker.accept_remote(&hash_of("shared"), ClipboardKind::Text, now));
+    }
+
+    #[test]
+    fn remote_content_is_not_rewritten_while_the_clipboard_still_holds_it() {
+        let now = Instant::now();
+        let mut tracker = ClipboardTracker::default();
+
+        assert!(tracker.accept_remote(&hash_of("shared"), ClipboardKind::Text, now));
+        assert!(!tracker.accept_remote(&hash_of("shared"), ClipboardKind::Text, now));
+    }
+
+    #[test]
+    fn a_reencoded_remote_payload_is_recognised_as_an_echo_and_not_sent_back() {
+        let now = Instant::now();
+        let mut tracker = ClipboardTracker::default();
+
+        assert!(tracker.accept_remote("remote-png-bytes", ClipboardKind::Image, now));
+        // Reading the written image back produces different PNG bytes, so the
+        // hash alone cannot tell this apart from a fresh copy.
+        assert_eq!(
+            tracker.observe_local("locally-reencoded-png-bytes", ClipboardKind::Image, now),
+            LocalClipboardChange::Echo
+        );
+        assert_eq!(
+            tracker.observe_local("locally-reencoded-png-bytes", ClipboardKind::Image, now),
+            LocalClipboardChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn only_the_first_change_after_a_remote_write_counts_as_an_echo() {
+        let now = Instant::now();
+        let mut tracker = ClipboardTracker::default();
+
+        assert!(tracker.accept_remote("remote-png-bytes", ClipboardKind::Image, now));
+        assert_eq!(
+            tracker.observe_local("locally-reencoded-png-bytes", ClipboardKind::Image, now),
+            LocalClipboardChange::Echo
+        );
+        assert_eq!(
+            tracker.observe_local("another-png-bytes", ClipboardKind::Image, now),
+            LocalClipboardChange::Changed
+        );
+    }
+
+    #[test]
+    fn an_echo_recognised_by_content_still_closes_the_echo_window() {
+        let now = Instant::now();
+        let mut tracker = ClipboardTracker::default();
+
+        assert!(tracker.accept_remote("remote-png-bytes", ClipboardKind::Image, now));
+        assert_eq!(
+            tracker.observe_local("remote-png-bytes", ClipboardKind::Image, now),
+            LocalClipboardChange::Unchanged
+        );
+        assert_eq!(
+            tracker.observe_local("another-png-bytes", ClipboardKind::Image, now),
+            LocalClipboardChange::Changed
+        );
+    }
+
+    #[test]
+    fn text_copied_right_after_a_remote_image_is_never_swallowed_as_an_echo() {
+        let now = Instant::now();
+        let mut tracker = ClipboardTracker::default();
+
+        assert!(tracker.accept_remote("remote-png-bytes", ClipboardKind::Image, now));
+        assert_eq!(
+            tracker.observe_local(&hash_of("copied by the user"), ClipboardKind::Text, now),
+            LocalClipboardChange::Changed
+        );
+    }
+
+    #[test]
+    fn a_copy_made_after_the_echo_window_is_still_sent() {
+        let now = Instant::now();
+        let mut tracker = ClipboardTracker::default();
+
+        assert!(tracker.accept_remote("remote-png-bytes", ClipboardKind::Image, now));
+        assert_eq!(
+            tracker.observe_local(
+                "another-png-bytes",
+                ClipboardKind::Image,
+                now + CLIPBOARD_ECHO_WINDOW
+            ),
+            LocalClipboardChange::Changed
+        );
+    }
+
+    #[test]
+    fn tracker_restore_reverts_only_when_the_clipboard_has_not_moved_on() {
+        let now = Instant::now();
+        let mut tracker = ClipboardTracker::default();
+
+        assert_eq!(
+            tracker.observe_local(&hash_of("first"), ClipboardKind::Text, now),
+            LocalClipboardChange::Changed
+        );
+        let before_second = tracker.snapshot();
+        assert_eq!(
+            tracker.observe_local(&hash_of("second"), ClipboardKind::Text, now),
+            LocalClipboardChange::Changed
+        );
+        tracker.restore(before_second, &hash_of("second"));
+        assert_eq!(
+            tracker.observe_local(&hash_of("second"), ClipboardKind::Text, now),
+            LocalClipboardChange::Changed
+        );
+
+        let before_third = tracker.snapshot();
+        assert_eq!(
+            tracker.observe_local(&hash_of("third"), ClipboardKind::Text, now),
+            LocalClipboardChange::Changed
+        );
+        tracker.restore(before_third, &hash_of("second"));
+        assert_eq!(
+            tracker.observe_local(&hash_of("third"), ClipboardKind::Text, now),
+            LocalClipboardChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn a_rolled_back_remote_write_does_not_leave_an_echo_window_open() {
+        let now = Instant::now();
+        let mut tracker = ClipboardTracker::default();
+
+        let before_remote = tracker.snapshot();
+        assert!(tracker.accept_remote("remote-png-bytes", ClipboardKind::Image, now));
+        tracker.restore(before_remote, "remote-png-bytes");
+
+        assert_eq!(
+            tracker.observe_local("another-png-bytes", ClipboardKind::Image, now),
+            LocalClipboardChange::Changed
+        );
+    }
+
+    #[test]
+    fn oversized_text_is_rejected_without_creating_an_event() {
+        let device = DeviceInfo::new_local("Windows Desk", 45731);
+        let payload = ClipboardPayload::Text {
+            text: "a".repeat(MAX_TEXT_BYTES + 1),
+        };
+
+        let result = event_from_payload(device.id, 1, 10, payload);
+
+        assert!(
+            matches!(result, Err(ClipboardError::TextTooLarge(size)) if size == MAX_TEXT_BYTES + 1)
+        );
     }
 
     #[test]

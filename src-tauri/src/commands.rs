@@ -100,7 +100,10 @@ pub fn get_dashboard_state(state: State<'_, AppState>) -> AppResult<DashboardSta
     let network_status = state.network_status.lock().unwrap().clone();
 
     Ok(DashboardState {
-        discovered_devices: visible_discovered_devices(settings.search_enabled, registry.discovered()),
+        discovered_devices: visible_discovered_devices(
+            settings.search_enabled,
+            registry.discovered(),
+        ),
         settings,
         paired_devices,
         active_pairing_code,

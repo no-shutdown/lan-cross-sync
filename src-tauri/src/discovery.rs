@@ -677,7 +677,8 @@ mod tests {
         let addr_a = socket_a.local_addr().unwrap();
 
         let pairing_a = test_pairing_runtime(device_a.clone(), &dir_a);
-        *pairing_a.active.lock().unwrap() = Some(crate::pairing::PairingSession::with_code_for_test("123456"));
+        *pairing_a.active.lock().unwrap() =
+            Some(crate::pairing::PairingSession::with_code_for_test("123456"));
 
         let pairing_b = test_pairing_runtime(device_b.clone(), &dir_b);
 

@@ -160,6 +160,11 @@ where
     Ok(payload)
 }
 
+pub fn encode_message(message: &TransportMessage) -> Result<Vec<u8>, TransportError> {
+    let payload = serde_json::to_vec(message).map_err(TransportError::InvalidMessage)?;
+    encode_frame(&payload)
+}
+
 pub async fn write_message<W>(
     writer: &mut W,
     message: &TransportMessage,
@@ -583,8 +588,22 @@ impl TransportRuntime {
                     let Some(message) = message else {
                         break Ok(());
                     };
-                    if let Err(err) = write_message(&mut writer, &message).await {
-                        break Err(err);
+                    // Encoding happens before anything touches the socket, so a
+                    // message this connection cannot represent is that message's
+                    // problem alone. Dropping the peer here would take clipboard
+                    // and file sync down with it until the next reconnect.
+                    let frame = match encode_message(&message) {
+                        Ok(frame) => frame,
+                        Err(err) => {
+                            tracing::warn!(?err, "dropped an outbound message that could not be encoded");
+                            continue;
+                        }
+                    };
+                    if let Err(err) = writer.write_all(&frame).await {
+                        break Err(err.into());
+                    }
+                    if let Err(err) = writer.flush().await {
+                        break Err(err.into());
                     }
                 }
                 _ = heartbeat.tick() => {
@@ -898,6 +917,93 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[tokio::test]
+    async fn an_unencodable_outbound_message_is_dropped_without_closing_the_connection() {
+        let local_a = DeviceInfo::new_local("Device A", 45731);
+        let local_b = DeviceInfo::new_local("Device B", 45731);
+        let registry_a = Arc::new(Mutex::new(PeerRegistry::from_paired(vec![PairedPeer {
+            device: local_b.clone(),
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Connected,
+        }])));
+        let registry_b = Arc::new(Mutex::new(PeerRegistry::from_paired(vec![PairedPeer {
+            device: local_a.clone(),
+            receive_clipboard: true,
+            send_clipboard: true,
+            is_default_file_target: false,
+            state: PeerConnectionState::Connected,
+        }])));
+        let (runtime_a, _events_a) = TransportRuntime::new(local_a.clone(), registry_a);
+        let (runtime_b, mut events_b) = TransportRuntime::new(local_b.clone(), registry_b);
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn({
+            let runtime_b = runtime_b.clone();
+            async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let _ = runtime_b.accept_connection(stream).await;
+            }
+        });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let peer = client_handshake(&mut stream, local_a.clone(), local_b.id.clone())
+            .await
+            .unwrap();
+        tokio::spawn({
+            let runtime_a = runtime_a.clone();
+            async move {
+                let _ = runtime_a.run_connection(stream, peer).await;
+            }
+        });
+
+        for _ in 0..100 {
+            if runtime_a.is_connected(&local_b.id) {
+                break;
+            }
+            time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(runtime_a.is_connected(&local_b.id));
+
+        let oversized = TransportMessage::Clipboard(ClipboardEvent::from_text(
+            local_a.id.clone(),
+            1,
+            10,
+            "a".repeat(MAX_CONTROL_FRAME_BYTES + 1),
+        ));
+        assert!(encode_message(&oversized).is_err());
+        runtime_a
+            .send_message(&local_b.id, oversized)
+            .await
+            .unwrap();
+        runtime_a
+            .send_message(&local_b.id, TransportMessage::Unpair)
+            .await
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = time::timeout(remaining, events_b.recv())
+                .await
+                .expect("the connection was closed by the unencodable message")
+                .unwrap();
+            if matches!(
+                event,
+                TransportEvent::Message {
+                    message: TransportMessage::Unpair,
+                    ..
+                }
+            ) {
+                break;
+            }
+        }
+        assert!(runtime_a.is_connected(&local_b.id));
     }
 
     #[tokio::test]
